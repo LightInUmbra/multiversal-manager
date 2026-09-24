@@ -96,6 +96,23 @@ def create_table():
             SELECT scryfall_id, foil, DATE(price_updated, 'localtime'), price FROM collection
             WHERE scryfall_id IS NOT NULL AND price_updated IS NOT NULL
         """)
+        # Printings followed in the Finance window, whether owned or not. Their prices
+        # go into the same price_history as the collection's.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS watchlist (
+                scryfall_id TEXT NOT NULL,
+                foil INTEGER NOT NULL,
+                name TEXT NOT NULL,
+                set_code TEXT,
+                set_name TEXT,
+                collector_number TEXT,
+                rarity TEXT,
+                image_url TEXT,
+                price REAL,
+                price_updated TEXT,
+                PRIMARY KEY (scryfall_id, foil)
+            )
+        """)
 
 
 def _add(conn, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
@@ -229,15 +246,19 @@ def get_price_history(scryfall_id, foil):
         )]
 
 
+def _past_lookup(days):
+    # SQL tail (and params) picking a price_history row `h` as of `days` days ago
+    if days is None:
+        return "ORDER BY h.day ASC LIMIT 1", ()
+    cutoff = date.fromisoformat(_today()) - timedelta(days=days)
+    return "AND h.day <= ? ORDER BY h.day DESC LIMIT 1", (cutoff.isoformat(),)
+
+
 def get_past_prices(days=None):
     """{card_id: price} -- each Scryfall-linked entry's price `days` days ago (the
     latest recorded on or before that day), or its earliest recorded price when
     days is None. Entries with no history that old are left out."""
-    if days is None:
-        lookup, params = "ORDER BY h.day ASC LIMIT 1", ()
-    else:
-        cutoff = date.fromisoformat(_today()) - timedelta(days=days)
-        lookup, params = "AND h.day <= ? ORDER BY h.day DESC LIMIT 1", (cutoff.isoformat(),)
+    lookup, params = _past_lookup(days)
     with _connect() as conn:
         rows = conn.execute(f"""
             SELECT c.id, (
@@ -247,6 +268,66 @@ def get_past_prices(days=None):
             FROM collection c WHERE c.scryfall_id IS NOT NULL
         """, params).fetchall()
         return {row["id"]: row["past"] for row in rows if row["past"] is not None}
+
+
+# Watchlist (Finance window)
+
+def watch_cards(records):
+    """Adds printings to the watchlist or refreshes the ones already there. records are
+    dicts with scryfall_id, foil, name, set_code, set_name, collector_number, rarity,
+    image_url and price (None when Scryfall has none). Returns how many were written."""
+    stamp, today = _now(), _today()
+    with _connect() as conn:
+        for r in records:
+            conn.execute("""
+                INSERT INTO watchlist (scryfall_id, foil, name, set_code, set_name, collector_number,
+                                       rarity, image_url, price, price_updated)
+                VALUES (:scryfall_id, :foil, :name, :set_code, :set_name, :collector_number,
+                        :rarity, :image_url, :price, :stamp)
+                ON CONFLICT (scryfall_id, foil) DO UPDATE SET name = excluded.name,
+                    set_code = excluded.set_code, set_name = excluded.set_name,
+                    collector_number = excluded.collector_number, rarity = excluded.rarity,
+                    image_url = excluded.image_url, price = excluded.price,
+                    price_updated = excluded.price_updated
+            """, {**r, "foil": int(r["foil"]), "stamp": stamp})
+            # Only store a point when the price moved: tracking every card means ~150k
+            # printings a day, and "latest on or before a day" lookups work on sparse history
+            if r["price"]:
+                conn.execute("""
+                    INSERT INTO price_history (scryfall_id, foil, day, price)
+                    SELECT ?, ?, ?, ? WHERE ? IS NOT (
+                        SELECT price FROM price_history WHERE scryfall_id = ? AND foil = ?
+                        ORDER BY day DESC LIMIT 1)
+                    ON CONFLICT (scryfall_id, foil, day) DO UPDATE SET price = excluded.price
+                """, (r["scryfall_id"], int(r["foil"]), today, r["price"], r["price"],
+                      r["scryfall_id"], int(r["foil"])))
+        return len(records)
+
+
+def get_watchlist(days=None):
+    # Every watched printing plus its price `days` days ago as "past" (None if no history
+    # that old), with the same lookup rules as get_past_prices
+    lookup, params = _past_lookup(days)
+    with _connect() as conn:
+        return conn.execute(f"""
+            SELECT w.*, (
+                SELECT h.price FROM price_history h
+                WHERE h.scryfall_id = w.scryfall_id AND h.foil = w.foil {lookup}
+            ) AS past
+            FROM watchlist w ORDER BY w.name COLLATE NOCASE
+        """, params).fetchall()
+
+
+def unwatch(keys):
+    # keys: iterable of (scryfall_id, foil)
+    with _connect() as conn:
+        conn.executemany("DELETE FROM watchlist WHERE scryfall_id = ? AND foil = ?",
+                         [(sid, int(foil)) for sid, foil in keys])
+
+
+def clear_watchlist():
+    with _connect() as conn:
+        conn.execute("DELETE FROM watchlist")
 
 
 def remove_card(card_id):

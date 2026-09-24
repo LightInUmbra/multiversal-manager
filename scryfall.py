@@ -10,7 +10,9 @@ background threads (see background.py).
 """
 
 # Imports
+import gzip
 import hashlib
+import json
 import sys
 import time
 from pathlib import Path
@@ -160,6 +162,27 @@ def get_set_codes():
     # {lowercased set name: set code}, for files that only give the set's full name
     data = _get_json("/sets")
     return {s["name"].lower(): s["code"] for s in data["data"]} if data else {}
+
+
+def bulk_info(kind="default-cards"):
+    # Metadata for one of Scryfall's daily bulk files: updated_at, jsonl_download_uri,
+    # compressed_size. default-cards is every printing (English, or its only language).
+    return _get_json(f"/bulk-data/{kind}")
+
+
+def iter_bulk_cards(info, progress=None):
+    # Streams a bulk file one Card at a time -- it's gzipped JSON lines, so the whole
+    # ~500 MB of card data never sits in memory. progress((done, total)) is called with
+    # compressed bytes read every few thousand cards.
+    with requests.get(info["jsonl_download_uri"], headers={"User-Agent": HEADERS["User-Agent"]},
+                      timeout=TIMEOUT, stream=True) as response:
+        response.raise_for_status()
+        with gzip.open(response.raw, "rt", encoding="utf-8") as lines:
+            for count, line in enumerate(lines):
+                if line.strip():
+                    yield Card(json.loads(line))
+                if progress and count % 5000 == 0:
+                    progress((response.raw.tell(), info["compressed_size"]))
 
 
 def fetch_image(url):

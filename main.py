@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 
 import background
 import database as db
+import finance
 import importer
 import scryfall
 import trends
@@ -204,6 +205,9 @@ class MainWindow(QMainWindow):
         trends_button = QPushButton("Trends…")
         trends_button.setToolTip("Collection value over time, and the biggest gainers and losers")
         trends_button.clicked.connect(self.show_trends)
+        finance_button = QPushButton("Finance…")
+        finance_button.setToolTip("Price spikes and drops across the cards you follow, or every card")
+        finance_button.clicked.connect(self.show_finance)
 
         add_button = QPushButton("Add Card")
         add_button.clicked.connect(self.on_add_card_clicked)
@@ -220,6 +224,7 @@ class MainWindow(QMainWindow):
         button_layout.addSpacing(12)
         button_layout.addWidget(self.change_label, stretch=1)
         button_layout.addWidget(trends_button)
+        button_layout.addWidget(finance_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.remove_button)
@@ -264,6 +269,9 @@ class MainWindow(QMainWindow):
         trends_action = QAction("Collection &Trends…", self, shortcut="Ctrl+T")
         trends_action.triggered.connect(self.show_trends)
         view_menu.addAction(trends_action)
+        finance_action = QAction("&Finance…", self, shortcut="Ctrl+Shift+F")
+        finance_action.triggered.connect(self.show_finance)
+        view_menu.addAction(finance_action)
 
         help_menu = self.menuBar().addMenu("&Help")
         about_action = QAction(f"&About {APP_NAME}", self)
@@ -341,6 +349,18 @@ class MainWindow(QMainWindow):
 
     def show_trends(self):
         trends.TrendsDialog(self.period_combo.currentText(), self).exec()
+
+    def show_finance(self):
+        # Separate window that stays open alongside the collection. The first time,
+        # ask whether to start empty or track every card.
+        if getattr(self, "_finance", None) is None:
+            mode = self.settings.value("finance_mode") or finance.ask_mode(self)
+            if mode is None:
+                return
+            self._finance = finance.FinanceWindow(mode, self)
+        self._finance.show()
+        self._finance.raise_()
+        self._finance.activateWindow()
 
     def select_ids(self, ids):
         # Signals are blocked so the detail panel updates once at the end rather

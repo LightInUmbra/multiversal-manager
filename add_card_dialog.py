@@ -2,7 +2,7 @@
 from PySide6.QtCore import Qt, QStringListModel, QTimer
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QSpinBox, QDialogButtonBox, QCompleter,
+    QSpinBox, QDialogButtonBox, QCompleter, QCheckBox,
 )
 
 import background
@@ -20,11 +20,13 @@ def _autocomplete(text):
 class CardDialog(QDialog):
     """Add a card, or edit an existing collection entry (pass its database row as
     `existing`). Type a name (with live Scryfall suggestions), pick the exact
-    printing, and the set, price and image fill in automatically."""
+    printing, and the set, price and image fill in automatically.
+    With watch=True it picks cards to track in the Finance window instead: no
+    quantity, and an option to track every printing at once."""
 
-    def __init__(self, parent=None, existing=None):
+    def __init__(self, parent=None, existing=None, watch=False):
         super().__init__(parent)
-        self.setWindowTitle("Edit Card" if existing else "Add Card")
+        self.setWindowTitle("Track Card" if watch else "Edit Card" if existing else "Add Card")
         self._lookup_name = None
 
         # Name + suggestions
@@ -62,13 +64,18 @@ class CardDialog(QDialog):
         form_layout = QFormLayout()
         form_layout.addRow("Name:", name_row)
         form_layout.addRow(self.picker)
-        form_layout.addRow("Quantity:", self.quantity_input)
+        self.all_printings_check = QCheckBox("Track every printing and finish of this card")
+        if watch:
+            form_layout.addRow(self.all_printings_check)
+            self.all_printings_check.toggled.connect(lambda on: self.picker.setEnabled(not on))
+        else:
+            form_layout.addRow("Quantity:", self.quantity_input)
 
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
-        self.ok_button.setText("Save Changes" if existing else "Add to Collection")
+        self.ok_button.setText("Track" if watch else "Save Changes" if existing else "Add to Collection")
         self.ok_button.setEnabled(False)
         # Enter in the name box means "look up", never "submit"
         for button in self.button_box.buttons():
