@@ -1,7 +1,7 @@
 # Imports
 import sqlite3 as sql
 from contextlib import contextmanager
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Constants
@@ -41,6 +41,20 @@ def _now():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def _today():
+    # Local calendar day; history keeps one price per printing + finish per day
+    return date.today().isoformat()
+
+
+def _record_price(conn, scryfall_id, foil, price):
+    # Scryfall's market price for a printing + finish on a given day (latest wins)
+    if scryfall_id and price is not None:
+        conn.execute("""
+            INSERT INTO price_history (scryfall_id, foil, day, price) VALUES (?, ?, ?, ?)
+            ON CONFLICT (scryfall_id, foil, day) DO UPDATE SET price = excluded.price
+        """, (scryfall_id, int(foil), _today(), price))
+
+
 # Functions
 def create_table():
     with _connect() as conn:
@@ -58,11 +72,39 @@ def create_table():
             if column not in existing:
                 conn.execute(f"ALTER TABLE collection ADD COLUMN {column} {definition}")
 
+        # Price history is kept per printing + finish rather than per collection row,
+        # so it survives rows being edited, merged, removed and re-added
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS price_history (
+                scryfall_id TEXT NOT NULL,
+                foil INTEGER NOT NULL,
+                day TEXT NOT NULL,
+                price REAL NOT NULL,
+                PRIMARY KEY (scryfall_id, foil, day)
+            )
+        """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS value_history (
+                day TEXT PRIMARY KEY,
+                value REAL NOT NULL,
+                cards INTEGER NOT NULL
+            )
+        """)
+        # Seed history from prices saved before history existed, dated when they were fetched
+        conn.execute("""
+            INSERT OR IGNORE INTO price_history (scryfall_id, foil, day, price)
+            SELECT scryfall_id, foil, DATE(price_updated, 'localtime'), price FROM collection
+            WHERE scryfall_id IS NOT NULL AND price_updated IS NOT NULL
+        """)
+
 
 def _add(conn, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
-         collector_number=None, foil=False, rarity=None, artist=None, image_url=None):
+         collector_number=None, foil=False, rarity=None, artist=None, image_url=None,
+         market_price=None):
     # The same printing + finish only gets one row -- adding it again bumps the quantity
     # (and refreshes the price) instead of creating a duplicate. Returns the row id.
+    # market_price is Scryfall's price, recorded to history even if `price` was overridden.
+    _record_price(conn, scryfall_id, foil, market_price)
     if scryfall_id:
         existing = conn.execute(
             "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ?",
@@ -97,10 +139,12 @@ def add_cards(cards):
 
 
 def update_card(card_id, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
-                collector_number=None, foil=False, rarity=None, artist=None, image_url=None):
+                collector_number=None, foil=False, rarity=None, artist=None, image_url=None,
+                market_price=None):
     # Rewrites an entry (e.g. after changing its printing). If that makes it the same
     # printing + finish as another entry, the two are merged. Returns the surviving id.
     with _connect() as conn:
+        _record_price(conn, scryfall_id, foil, market_price)
         if scryfall_id:
             other = conn.execute(
                 "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ? AND id != ?",
@@ -146,13 +190,63 @@ def update_quantity(card_id, quantity):
 
 
 def update_prices(prices):
-    # prices: iterable of (card_id, new_price)
+    # prices: iterable of (card_id, new Scryfall price). Also recorded to price history.
     stamp = _now()
     with _connect() as conn:
-        conn.executemany(
-            "UPDATE collection SET price = ?, price_updated = ? WHERE id = ?",
-            [(price, stamp, card_id) for card_id, price in prices],
-        )
+        for card_id, price in prices:
+            conn.execute("UPDATE collection SET price = ?, price_updated = ? WHERE id = ?",
+                         (price, stamp, card_id))
+            row = conn.execute("SELECT scryfall_id, foil FROM collection WHERE id = ?", (card_id,)).fetchone()
+            if row:
+                _record_price(conn, row["scryfall_id"], row["foil"], price)
+
+
+# History
+
+def record_value_snapshot():
+    # Today's total collection value (latest wins), for the value-over-time chart
+    with _connect() as conn:
+        conn.execute("""
+            INSERT INTO value_history (day, value, cards)
+            SELECT ?, COALESCE(SUM(price * quantity), 0), COALESCE(SUM(quantity), 0) FROM collection
+            WHERE true
+            ON CONFLICT (day) DO UPDATE SET value = excluded.value, cards = excluded.cards
+        """, (_today(),))
+
+
+def get_value_history():
+    # [(day, value, cards)] oldest first
+    with _connect() as conn:
+        return [tuple(r) for r in conn.execute("SELECT day, value, cards FROM value_history ORDER BY day")]
+
+
+def get_price_history(scryfall_id, foil):
+    # [(day, price)] oldest first
+    with _connect() as conn:
+        return [tuple(r) for r in conn.execute(
+            "SELECT day, price FROM price_history WHERE scryfall_id = ? AND foil = ? ORDER BY day",
+            (scryfall_id, int(foil)),
+        )]
+
+
+def get_past_prices(days=None):
+    """{card_id: price} -- each Scryfall-linked entry's price `days` days ago (the
+    latest recorded on or before that day), or its earliest recorded price when
+    days is None. Entries with no history that old are left out."""
+    if days is None:
+        lookup, params = "ORDER BY h.day ASC LIMIT 1", ()
+    else:
+        cutoff = date.fromisoformat(_today()) - timedelta(days=days)
+        lookup, params = "AND h.day <= ? ORDER BY h.day DESC LIMIT 1", (cutoff.isoformat(),)
+    with _connect() as conn:
+        rows = conn.execute(f"""
+            SELECT c.id, (
+                SELECT h.price FROM price_history h
+                WHERE h.scryfall_id = c.scryfall_id AND h.foil = c.foil {lookup}
+            ) AS past
+            FROM collection c WHERE c.scryfall_id IS NOT NULL
+        """, params).fetchall()
+        return {row["id"]: row["past"] for row in rows if row["past"] is not None}
 
 
 def remove_card(card_id):

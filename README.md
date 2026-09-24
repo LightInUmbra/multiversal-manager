@@ -7,6 +7,7 @@ A desktop app for tracking a Magic: The Gathering card collection: what you own,
 - **Scryfall-powered Add Card**: start typing a name and suggestions appear as you type. Pick the exact printing you own (every paper printing is listed) and the set, finish and current price fill in automatically.
 - **Card images**: see a full card preview while adding and when selecting a card in your collection. Images are cached locally after the first load.
 - **Collection value**: a running total of your collection's value, plus total and unique card counts.
+- **Price history and trends**: every Scryfall price is recorded once a day per printing and finish. A *Change* column shows how each card has moved over 24 hours, 7, 30 or 90 days, or all time, and the summary shows the whole collection's movement. Selecting a card charts its price history. *Trends…* (Ctrl+T) charts the collection's value over time and lists the biggest gainers and losers. Changes count price movement only, so adding or removing cards doesn't show up as a gain or loss.
 - **Price refresh**: prices older than 24 hours update automatically on startup, or on demand with *Refresh Prices*. Foil and non-foil copies are priced separately.
 - **Editing**: right-click or double-click a card (or use *Edit…*) to change its printing, finish, quantity or price. Double-click a quantity to change just that. Adding a printing you already own increases its quantity instead of creating a duplicate row.
 - **Filter and sort**: filter by name, set or artist, and sort by any column.
@@ -52,6 +53,8 @@ multiversal-manager/
     printing_picker.py    # Printing, finish and price picker with card preview
     import_review_dialog.py  # Review imported entries and choose printings
     card_image.py         # Card image widget (async loading, never crops the card)
+    charts.py             # Price / value history line charts (QtCharts)
+    trends.py             # Price change calculations and the Trends window
     importer.py           # Parses CSV / text card lists and matches them on Scryfall
     scryfall.py           # Adapter over ScryFunctions + autocomplete, prices, images
     background.py         # Runs network calls off the GUI thread

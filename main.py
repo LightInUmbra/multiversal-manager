@@ -3,22 +3,24 @@ import csv
 import sys
 from datetime import datetime, timedelta, timezone
 
-from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, QUrl
+from PySide6.QtCore import Qt, QItemSelectionModel, QSettings, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QProgressDialog, QMenu,
+    QProgressDialog, QMenu, QComboBox,
 )
 
 import background
 import database as db
 import importer
 import scryfall
+import trends
 from add_card_dialog import CardDialog
 from import_review_dialog import ImportReviewDialog
 from card_image import CardImage
+from charts import HistoryChart
 
 # Constants
 APP_NAME = "Multiversal Manager"
@@ -33,10 +35,12 @@ SCRYFALL_NOTICE = "Card data, prices and images provided by Scryfall (scryfall.c
 # Scryfall updates prices about once a day, so anything older is refreshed on startup
 PRICE_MAX_AGE = timedelta(hours=24)
 
-COLUMNS = ["Name", "Set", "#", "Finish", "Qty", "Price", "Total"]
-NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, QTY_COL, PRICE_COL, TOTAL_COL = range(len(COLUMNS))
+COLUMNS = ["Name", "Set", "#", "Finish", "Qty", "Price", "Total", "Change"]
+(NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, QTY_COL, PRICE_COL, TOTAL_COL,
+ CHANGE_COL) = range(len(COLUMNS))
 
 ID_ROLE = Qt.ItemDataRole.UserRole          # database id, stored on the Name cell
+PERCENT_ROLE = Qt.ItemDataRole.UserRole + 1  # % price change, stored on the Change cell
 
 
 def _item(value, align_right=False):
@@ -66,6 +70,15 @@ def _money(value):
 class MoneyDelegate(QStyledItemDelegate):
     def displayText(self, value, locale):
         return _money(value)
+
+
+class ChangeDelegate(QStyledItemDelegate):
+    # The Change cell holds the per-copy $ change (so it sorts numerically);
+    # show it as "+$1.20 (+15.0%)"
+    def initStyleOption(self, option, index):
+        super().initStyleOption(option, index)
+        amount = index.data(Qt.ItemDataRole.DisplayRole)
+        option.text = trends.format_change(amount, index.data(PERCENT_ROLE)) if amount is not None else ""
 
 
 def _price_is_stale(row):
@@ -107,6 +120,19 @@ class MainWindow(QMainWindow):
         self.filter_input.setClearButtonEnabled(True)
         self.filter_input.textChanged.connect(self.apply_filter)
 
+        # How far back the Change column and summary compare prices (remembered between runs)
+        self.settings = QSettings("Multiversal Manager", "Multiversal Manager")
+        self.period_combo = QComboBox()
+        for label, _ in trends.PERIODS:
+            self.period_combo.addItem(label)
+        self.period_combo.setCurrentText(self.settings.value("change_period", trends.DEFAULT_PERIOD))
+        self.period_combo.setToolTip("Price movement is measured from the price recorded this long ago")
+        self.period_combo.currentTextChanged.connect(self.on_period_changed)
+        filter_row = QHBoxLayout()
+        filter_row.addWidget(self.filter_input, stretch=1)
+        filter_row.addWidget(QLabel("Price change over:"))
+        filter_row.addWidget(self.period_combo)
+
         # Collection table
         self.table = QTableWidget(0, len(COLUMNS))
         self.table.setHorizontalHeaderLabels(COLUMNS)
@@ -124,6 +150,7 @@ class MainWindow(QMainWindow):
         money_delegate = MoneyDelegate(self.table)
         self.table.setItemDelegateForColumn(PRICE_COL, money_delegate)
         self.table.setItemDelegateForColumn(TOTAL_COL, money_delegate)
+        self.table.setItemDelegateForColumn(CHANGE_COL, ChangeDelegate(self.table))
         self.table.sortByColumn(NAME_COL, Qt.SortOrder.AscendingOrder)
         self.table.itemSelectionChanged.connect(self.show_selected_card)
         self.table.itemChanged.connect(self.on_item_changed)
@@ -153,12 +180,14 @@ class MainWindow(QMainWindow):
             detail_form.addRow(f"{label}:", widget)
         self.scryfall_button = QPushButton("View on Scryfall")
         self.scryfall_button.clicked.connect(self.open_on_scryfall)
+        self.price_chart = HistoryChart(min_height=150)
 
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.addWidget(self.card_image, stretch=1)
         detail_layout.addWidget(self.detail_name)
         detail_layout.addLayout(detail_form)
+        detail_layout.addWidget(self.price_chart)
         detail_layout.addWidget(self.scryfall_button)
 
         splitter = QSplitter()
@@ -171,6 +200,10 @@ class MainWindow(QMainWindow):
         # Summary + buttons
         self.summary_label = QLabel()
         self.summary_label.setStyleSheet("font-size: 15px; font-weight: bold;")
+        self.change_label = QLabel()
+        trends_button = QPushButton("Trends…")
+        trends_button.setToolTip("Collection value over time, and the biggest gainers and losers")
+        trends_button.clicked.connect(self.show_trends)
 
         add_button = QPushButton("Add Card")
         add_button.clicked.connect(self.on_add_card_clicked)
@@ -183,7 +216,10 @@ class MainWindow(QMainWindow):
         self.refresh_button.clicked.connect(lambda: self.refresh_prices())
 
         button_layout = QHBoxLayout()
-        button_layout.addWidget(self.summary_label, stretch=1)
+        button_layout.addWidget(self.summary_label)
+        button_layout.addSpacing(12)
+        button_layout.addWidget(self.change_label, stretch=1)
+        button_layout.addWidget(trends_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.remove_button)
@@ -195,7 +231,7 @@ class MainWindow(QMainWindow):
 
         central = QWidget()
         outer_layout = QVBoxLayout(central)
-        outer_layout.addWidget(self.filter_input)
+        outer_layout.addLayout(filter_row)
         outer_layout.addWidget(splitter, stretch=1)
         outer_layout.addLayout(button_layout)
         outer_layout.addWidget(notice)
@@ -224,6 +260,10 @@ class MainWindow(QMainWindow):
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
 
+        view_menu = self.menuBar().addMenu("&View")
+        trends_action = QAction("Collection &Trends…", self, shortcut="Ctrl+T")
+        trends_action.triggered.connect(self.show_trends)
+        view_menu.addAction(trends_action)
 
         help_menu = self.menuBar().addMenu("&Help")
         about_action = QAction(f"&About {APP_NAME}", self)
@@ -235,6 +275,7 @@ class MainWindow(QMainWindow):
     def populate_table(self):
         rows = db.get_all_cards()
         self._rows_by_id = {row["id"]: row for row in rows}
+        self._changes = trends.compute_changes(rows, db.get_past_prices(self.period_days()))
         selected_ids = set(self.selected_ids())
 
         # Sorting and itemChanged are paused while filling, otherwise rows
@@ -264,6 +305,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_index, QTY_COL, quantity_item)
             self.table.setItem(row_index, PRICE_COL, _item(row["price"], True))
             self.table.setItem(row_index, TOTAL_COL, _item(total, True))
+            self.table.setItem(row_index, CHANGE_COL, self._change_item(row))
 
         self.table.blockSignals(False)
         self.table.setSortingEnabled(True)
@@ -272,6 +314,33 @@ class MainWindow(QMainWindow):
         self.select_ids(selected_ids)
         self.apply_filter()
         self.update_summary()
+
+    def _change_item(self, row):
+        change = self._changes.get(row["id"])
+        if change is None:
+            item = _item(None, True)
+            if row["scryfall_id"]:
+                item.setToolTip(f"No price recorded {self.period_combo.currentText()} ago yet")
+            return item
+        item = _item(change.each, True)
+        item.setData(PERCENT_ROLE, change.percent)
+        color = trends.change_color(change.each)
+        if color is not None:
+            item.setForeground(color)
+        item.setToolTip(f"${change.past:,.2f} → ${change.now:,.2f} each"
+                        + (f"\n{trends.format_change(change.total)} across {change.quantity} copies"
+                           if change.quantity > 1 else ""))
+        return item
+
+    def period_days(self):
+        return dict(trends.PERIODS)[self.period_combo.currentText()]
+
+    def on_period_changed(self, label):
+        self.settings.setValue("change_period", label)
+        self.populate_table()
+
+    def show_trends(self):
+        trends.TrendsDialog(self.period_combo.currentText(), self).exec()
 
     def select_ids(self, ids):
         # Signals are blocked so the detail panel updates once at the end rather
@@ -301,6 +370,18 @@ class MainWindow(QMainWindow):
             f"Total value: ${value:,.2f}    ·    {count:,} card{'s' if count != 1 else ''}"
             f" ({unique:,} unique)"
         )
+        overall = trends.collection_change(self._changes)
+        if overall is None:
+            self.change_label.setText("")
+        else:
+            total, percent = overall
+            color = trends.change_color(total)
+            self.change_label.setText(f"{trends.format_change(total, percent)} "
+                                      f"over {self.period_combo.currentText().lower()}")
+            self.change_label.setStyleSheet(
+                "font-size: 14px;" + (f" color: {color.name()};" if color else " color: gray;"))
+        self.change_label.setToolTip("Price movement only; adding or removing cards doesn't count")
+        db.record_value_snapshot()
 
     def selected_ids(self):
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -335,6 +416,7 @@ class MainWindow(QMainWindow):
             for widget in self.detail_fields.values():
                 widget.setText("")
             self.scryfall_button.setEnabled(False)
+            self.price_chart.show_message("")
             return
 
         self.card_image.set_image_url(row["image_url"])
@@ -355,6 +437,13 @@ class MainWindow(QMainWindow):
         else:
             fields["Price as of"].setText("Entered manually")
         self.scryfall_button.setEnabled(bool(row["set_code"] and row["collector_number"]))
+
+        if row["scryfall_id"]:
+            history = db.get_price_history(row["scryfall_id"], row["foil"])
+            self.price_chart.set_points(history)
+            self.price_chart.chart.setTitle(f"Price history ({len(history)} day{'s' if len(history) != 1 else ''})")
+        else:
+            self.price_chart.show_message("Link this card to Scryfall (Edit…) to track its price.")
 
     def open_on_scryfall(self):
         ids = self.selected_ids()
