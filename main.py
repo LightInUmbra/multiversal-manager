@@ -62,14 +62,14 @@ def populate_table():
     rows = db.get_all_cards()
     table.setRowCount(len(rows))
 
-    for row_index, (card_id, name, set_name, price, quantity) in enumerate(rows):
-        name_item = QTableWidgetItem(name)
-        name_item.setData(Qt.ItemDataRole.UserRole, card_id)
+    for row_index, row in enumerate(rows):
+        name_item = QTableWidgetItem(row["name"])
+        name_item.setData(Qt.ItemDataRole.UserRole, row["id"])
 
         table.setItem(row_index, 0, name_item)
-        table.setItem(row_index, 1, QTableWidgetItem(set_name))
-        table.setItem(row_index, 2, QTableWidgetItem(f"${price:.2f}"))
-        table.setItem(row_index, 3, QTableWidgetItem(str(quantity)))
+        table.setItem(row_index, 1, QTableWidgetItem(row["set_name"]))
+        table.setItem(row_index, 2, QTableWidgetItem(f"${row['price']:.2f}"))
+        table.setItem(row_index, 3, QTableWidgetItem(str(row["quantity"])))
 
 
 # Action functions
