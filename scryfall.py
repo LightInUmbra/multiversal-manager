@@ -25,7 +25,9 @@ if not (_MAGIC_PROJECTS / "Functions" / "ScryFunctions.py").exists():
     raise ImportError(
         "Magic-Projects submodule is missing. Run: git submodule update --init"
     )
-sys.path.insert(0, str(_MAGIC_PROJECTS))
+# Appended (not prepended) so this project's own modules always win over same-named
+# ones in Magic-Projects (it has its own main.py, for example)
+sys.path.append(str(_MAGIC_PROJECTS))
 
 from Functions import ScryFunctions as sf  # noqa: E402
 from classes.card import Card  # noqa: E402
@@ -95,6 +97,8 @@ def card_record(card, foil, quantity, price=None):
         "rarity": card.rarity,
         "artist": card.artist,
         "image_url": image_url_for(card),
+        # Scryfall's own price, kept for price history even when `price` is overridden
+        "market_price": price_for(card, foil),
     }
 
 
