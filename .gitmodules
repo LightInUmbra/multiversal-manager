@@ -1,0 +1,3 @@
+[submodule "external/Magic-Projects"]
+	path = external/Magic-Projects
+	url = https://github.com/LightInUmbra/Magic-Projects.git
