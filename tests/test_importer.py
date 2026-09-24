@@ -183,3 +183,14 @@ def test_set_and_number_pointing_at_another_card_falls_back_to_name():
     result = importer.resolve(rows, lookup=fake.lookup)
     assert [card.id for _, card in result.matched] == ["w"]
     assert len(result.approximate) == 1
+
+
+def test_alternate_names_are_found_by_fuzzy_lookup_and_flagged():
+    fake = FakeScryfall([])
+    rhystic = _card("r", "Rhystic Study", "sld", "1234")
+    rows, _ = importer.parse_text("1 Unstable Harmonics\n1 Totally Fake Card")
+    result = importer.resolve(rows, lookup=fake.lookup,
+                              fuzzy=lambda name: rhystic if name == "Unstable Harmonics" else None)
+    assert [(row.name, card.name) for row, card in result.matched] == [("Unstable Harmonics", "Rhystic Study")]
+    assert len(result.approximate) == 1
+    assert [row.name for row in result.unmatched] == ["Totally Fake Card"]

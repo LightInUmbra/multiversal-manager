@@ -27,9 +27,16 @@ class _Task(QRunnable):
         try:
             result = self.fn(*self.args)
         except Exception as error:  # surfaced to the UI instead of dying silently in a thread
-            self.signals.failed.emit(str(error) or type(error).__name__)
+            outcome = (self.signals.failed, str(error) or type(error).__name__)
         else:
-            self.signals.succeeded.emit(result)
+            outcome = (self.signals.succeeded, result)
+        signal, value = outcome
+        try:
+            signal.emit(value)
+        except RuntimeError:
+            # The app is shutting down and the signal object is already gone -- nobody
+            # is left to receive the result
+            pass
 
 
 def run(fn, *args, on_success, on_error=None):

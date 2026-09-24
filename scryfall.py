@@ -146,6 +146,12 @@ def get_cards_by_id(scryfall_ids):
     return {card.id: card for card in get_collection([{"id": i} for i in ids])}
 
 
+def fuzzy_card(name):
+    # Scryfall's best guess for a misspelled or alternate card name, or None
+    data = _get_json("/cards/named", {"fuzzy": name})
+    return Card(data) if data else None
+
+
 def get_set_codes():
     # {lowercased set name: set code}, for files that only give the set's full name
     data = _get_json("/sets")

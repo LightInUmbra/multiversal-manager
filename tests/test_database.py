@@ -69,3 +69,29 @@ def test_update_quantity_prices_and_remove(temp_db):
 
     temp_db.remove_card(card_id)
     assert temp_db.get_all_cards() == []
+
+
+def test_update_card_changes_printing(temp_db):
+    card_id = temp_db.add_card("Manual Bolt", "Unknown", 0.0, 2)
+    new_id = temp_db.update_card(card_id, "Lightning Bolt", "Magic 2010", 1.9, 3,
+                                 scryfall_id="m10-146", set_code="M10", collector_number="146")
+    assert new_id == card_id
+    (row,) = temp_db.get_all_cards()
+    assert (row["name"], row["scryfall_id"], row["quantity"], row["price"]) == ("Lightning Bolt", "m10-146", 3, 1.9)
+    assert row["price_updated"] is not None
+
+
+def test_update_card_into_existing_printing_merges(temp_db):
+    keep = temp_db.add_card("Opt", "XLN", 0.1, 2, scryfall_id="opt-xln")
+    move = temp_db.add_card("Opt", "DOM", 0.2, 1, scryfall_id="opt-dom")
+    survivor = temp_db.update_card(move, "Opt", "XLN", 0.15, 1, scryfall_id="opt-xln")
+    assert survivor == keep
+    (row,) = temp_db.get_all_cards()
+    assert (row["id"], row["quantity"], row["price"]) == (keep, 3, 0.15)
+
+
+def test_update_card_foil_is_a_different_entry(temp_db):
+    temp_db.add_card("Opt", "XLN", 0.1, 2, scryfall_id="opt-xln")
+    foil = temp_db.add_card("Opt", "XLN", 0.1, 1, scryfall_id="opt-xln", foil=True)
+    temp_db.update_card(foil, "Opt", "XLN", 0.9, 1, scryfall_id="opt-xln", foil=True)
+    assert len(temp_db.get_all_cards()) == 2

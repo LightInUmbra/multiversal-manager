@@ -227,10 +227,19 @@ def _keys_for(card):
     ]
 
 
-def resolve(rows, lookup=scryfall.get_collection, set_codes=scryfall.get_set_codes):
+# Fuzzy lookups are one request each, so only the first this many unmatched rows get one
+MAX_FUZZY_LOOKUPS = 100
+
+
+def resolve(rows, lookup=None, set_codes=None, fuzzy=None):
     """Matches rows to Scryfall printings. If a row's most specific identifier
     isn't found (a typo'd collector number, say), it's retried with the next one,
-    falling back to name only as a last resort."""
+    falling back to name only. Rows still unmatched get a fuzzy name lookup, which
+    also catches alternate card names like Secret Lair's "Unstable Harmonics"
+    (Rhystic Study); those always count as approximate so the user confirms them."""
+    lookup = lookup or scryfall.get_collection
+    set_codes = set_codes or scryfall.get_set_codes
+    fuzzy = fuzzy or scryfall.fuzzy_card
     if any(row.set_name and not row.set_code for row in rows):
         codes = set_codes()
         for row in rows:
@@ -269,6 +278,15 @@ def resolve(rows, lookup=scryfall.get_collection, set_codes=scryfall.get_set_cod
             else:
                 result.unmatched.append(row)
         pending = still_pending
+
+    unmatched, result.unmatched = result.unmatched, []
+    for index, row in enumerate(unmatched):
+        card = fuzzy(row.name) if row.name and index < MAX_FUZZY_LOOKUPS else None
+        if card is None:
+            result.unmatched.append(row)
+        else:
+            result.matched.append((row, card))
+            result.approximate.append((row, card))
     return result
 
 

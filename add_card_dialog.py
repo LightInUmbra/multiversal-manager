@@ -2,13 +2,12 @@
 from PySide6.QtCore import Qt, QStringListModel, QTimer
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QComboBox, QCheckBox, QDoubleSpinBox, QSpinBox, QDialogButtonBox, QLabel,
-    QCompleter,
+    QSpinBox, QDialogButtonBox, QCompleter,
 )
 
 import background
 import scryfall
-from card_image import CardImage
+from printing_picker import PrintingPicker
 
 # Wait this long after the last keystroke before asking Scryfall for suggestions
 AUTOCOMPLETE_DELAY_MS = 300
@@ -18,18 +17,14 @@ def _autocomplete(text):
     return text, scryfall.autocomplete(text)
 
 
-def _printings(name):
-    return name, scryfall.get_printings(name)
+class CardDialog(QDialog):
+    """Add a card, or edit an existing collection entry (pass its database row as
+    `existing`). Type a name (with live Scryfall suggestions), pick the exact
+    printing, and the set, price and image fill in automatically."""
 
-
-class AddCardDialog(QDialog):
-    """Type a card name (with live Scryfall suggestions), pick the exact printing,
-    and the set, price and image fill in automatically."""
-
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, existing=None):
         super().__init__(parent)
-        self.setWindowTitle("Add Card")
-        self._printings = []
+        self.setWindowTitle("Edit Card" if existing else "Add Card")
         self._lookup_name = None
 
         # Name + suggestions
@@ -57,44 +52,24 @@ class AddCardDialog(QDialog):
         name_row.addWidget(self.name_input)
         name_row.addWidget(look_up_button)
 
-        # Printing details
-        self.printing_combo = QComboBox()
-        self.printing_combo.setMinimumContentsLength(32)
-        self.printing_combo.currentIndexChanged.connect(self._on_printing_changed)
-
-        self.foil_check = QCheckBox("Foil")
-        self.foil_check.toggled.connect(self._update_price)
-
-        self.price_input = QDoubleSpinBox()
-        self.price_input.setPrefix("$")
-        self.price_input.setMaximum(100000.00)  # a reasonable ceiling for a card price
-        self.price_input.setDecimals(2)
-        self.price_input.setToolTip("Filled in from Scryfall's USD price; you can override it")
+        self.picker = PrintingPicker()
+        self.picker.loaded.connect(self._on_loaded)
 
         self.quantity_input = QSpinBox()
         self.quantity_input.setMinimum(1)
-        self.quantity_input.setMaximum(999)
-
-        self.status_label = QLabel()
-        self.status_label.setWordWrap(True)
-        self.status_label.setStyleSheet("color: gray;")
+        self.quantity_input.setMaximum(9999)
 
         form_layout = QFormLayout()
         form_layout.addRow("Name:", name_row)
-        form_layout.addRow("Printing:", self.printing_combo)
-        form_layout.addRow("Finish:", self.foil_check)
-        form_layout.addRow("Price (each):", self.price_input)
+        form_layout.addRow(self.picker)
         form_layout.addRow("Quantity:", self.quantity_input)
-        form_layout.addRow(self.status_label)
-
-        self.image = CardImage(width=220)
-        self.image.clear_image("Look up a card to see it here")
 
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
         self.ok_button = self.button_box.button(QDialogButtonBox.StandardButton.Ok)
-        self.ok_button.setText("Add to Collection")
+        self.ok_button.setText("Save Changes" if existing else "Add to Collection")
+        self.ok_button.setEnabled(False)
         # Enter in the name box means "look up", never "submit"
         for button in self.button_box.buttons():
             button.setAutoDefault(False)
@@ -109,9 +84,14 @@ class AddCardDialog(QDialog):
 
         outer_layout = QHBoxLayout(self)
         outer_layout.addLayout(left, stretch=1)
-        outer_layout.addWidget(self.image)
+        outer_layout.addWidget(self.picker.image)
 
-        self._set_printings([])
+        if existing is not None:
+            self.name_input.setText(existing["name"])
+            self.quantity_input.setValue(existing["quantity"])
+            # Reselect the entry's current printing, finish and price once printings load
+            self._look_up(existing["name"], select_id=existing["scryfall_id"],
+                          foil=bool(existing["foil"]), price=existing["price"])
 
     # Autocomplete
 
@@ -132,81 +112,24 @@ class AddCardDialog(QDialog):
 
     # Printing lookup
 
-    def _look_up(self, name=None):
+    def _look_up(self, name=None, **restore):
         name = (name or self.name_input.text()).strip()
         if not name or name == self._lookup_name:
             return
         self._autocomplete_timer.stop()
         self._lookup_name = name
-        self._set_printings([])
-        self.status_label.setText(f"Searching Scryfall for “{name}”…")
-        background.run(_printings, name, on_success=self._on_printings, on_error=self._on_lookup_failed)
+        self.ok_button.setEnabled(False)
+        self.picker.load(name, **restore)
 
-    def _on_printings(self, result):
-        name, printings = result
-        if name != self._lookup_name:
-            return
-        if not printings:
+    def _on_loaded(self, found):
+        if not found:
             self._lookup_name = None
-            self.status_label.setText(f"No card found matching “{name}”.")
             return
-        self.name_input.setText(printings[0].name)
-        self._set_printings(printings)
-        count = len(printings)
-        self.status_label.setText(f"{count} printing{'s' if count != 1 else ''} found. Pick the one you own.")
-
-    def _on_lookup_failed(self, message):
-        self._lookup_name = None
-        self.status_label.setText(f"Couldn't reach Scryfall: {message}")
-
-    def _set_printings(self, printings):
-        self._printings = printings
-        self.printing_combo.blockSignals(True)
-        self.printing_combo.clear()
-        for card in printings:
-            self.printing_combo.addItem(scryfall.printing_label(card))
-        self.printing_combo.blockSignals(False)
-
-        has_printings = bool(printings)
-        self.printing_combo.setEnabled(has_printings)
-        self.ok_button.setEnabled(has_printings)
-        if has_printings:
-            self.printing_combo.setCurrentIndex(0)
-            self._on_printing_changed(0)
-        else:
-            self.foil_check.setEnabled(False)
-            self.price_input.setValue(0)
-            self.image.clear_image("Look up a card to see it here")
-
-    def _on_printing_changed(self, index):
-        card = self.selected_printing()
-        if card is None:
-            return
-        finishes = set(card.finishes)
-        # Only let the user choose when this printing exists in both finishes
-        self.foil_check.blockSignals(True)
-        self.foil_check.setChecked("nonfoil" not in finishes and "foil" in finishes)
-        self.foil_check.setEnabled({"foil", "nonfoil"} <= finishes)
-        self.foil_check.blockSignals(False)
-        self._update_price()
-        self.image.set_image_url(scryfall.image_url_for(card))
-
-    def _update_price(self):
-        card = self.selected_printing()
-        if card is not None:
-            self.price_input.setValue(scryfall.price_for(card, self.foil_check.isChecked()))
+        self.name_input.setText(self.picker.selected_printing().name)
+        self.ok_button.setEnabled(True)
 
     # Result
 
-    def selected_printing(self):
-        index = self.printing_combo.currentIndex()
-        return self._printings[index] if 0 <= index < len(self._printings) else None
-
     def card_data(self):
-        # Keyword arguments for database.add_card
-        return scryfall.card_record(
-            self.selected_printing(),
-            foil=self.foil_check.isChecked(),
-            quantity=self.quantity_input.value(),
-            price=self.price_input.value(),
-        )
+        # Keyword arguments for database.add_card / update_card
+        return self.picker.record(self.quantity_input.value())

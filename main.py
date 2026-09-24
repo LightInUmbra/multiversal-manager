@@ -4,19 +4,20 @@ import sys
 from datetime import datetime, timedelta, timezone
 
 from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, QUrl
-from PySide6.QtGui import QAction, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QProgressDialog,
+    QProgressDialog, QMenu,
 )
 
 import background
 import database as db
 import importer
 import scryfall
-from add_card_dialog import AddCardDialog
+from add_card_dialog import CardDialog
+from import_review_dialog import ImportReviewDialog
 from card_image import CardImage
 
 # Constants
@@ -131,6 +132,13 @@ class MainWindow(QMainWindow):
         remove_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
         remove_action.triggered.connect(self.on_remove_selected_clicked)
         self.table.addAction(remove_action)
+        # Right-click menu, and double-click anywhere but Qty (edited in place) opens Edit
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
+        self.table.cellDoubleClicked.connect(
+            lambda row, column: self.edit_card(self.table.item(row, NAME_COL).data(ID_ROLE))
+            if column != QTY_COL else None
+        )
 
         # Detail panel
         self.card_image = CardImage()
@@ -166,6 +174,9 @@ class MainWindow(QMainWindow):
 
         add_button = QPushButton("Add Card")
         add_button.clicked.connect(self.on_add_card_clicked)
+        self.edit_button = QPushButton("Edit…")
+        self.edit_button.setToolTip("Change printing, finish, quantity or price (or double-click / right-click a card)")
+        self.edit_button.clicked.connect(lambda: self.edit_card(self.selected_ids()[0]))
         self.remove_button = QPushButton("Remove Selected")
         self.remove_button.clicked.connect(self.on_remove_selected_clicked)
         self.refresh_button = QPushButton("Refresh Prices")
@@ -174,6 +185,7 @@ class MainWindow(QMainWindow):
         button_layout = QHBoxLayout()
         button_layout.addWidget(self.summary_label, stretch=1)
         button_layout.addWidget(self.refresh_button)
+        button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.remove_button)
         button_layout.addWidget(add_button)
 
@@ -315,6 +327,7 @@ class MainWindow(QMainWindow):
         ids = self.selected_ids()
         row = self._rows_by_id.get(ids[0]) if len(ids) == 1 else None
         self.remove_button.setEnabled(bool(ids))
+        self.edit_button.setEnabled(len(ids) == 1)
 
         if row is None:
             self.card_image.clear_image(f"{len(ids)} cards selected" if ids else "No card selected")
@@ -352,7 +365,7 @@ class MainWindow(QMainWindow):
     # Action functions
 
     def on_add_card_clicked(self):
-        dialog = AddCardDialog(self)
+        dialog = CardDialog(self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         card_id = db.add_card(**dialog.card_data())
@@ -360,6 +373,43 @@ class MainWindow(QMainWindow):
         self.populate_table()
         # Select the card that was just added so it shows in the detail panel
         self.select_ids({card_id})
+
+    def edit_card(self, card_id):
+        row = self._rows_by_id.get(card_id)
+        if row is None:
+            return
+        dialog = CardDialog(self, existing=row)
+        if dialog.exec() != QDialog.DialogCode.Accepted:
+            return
+        surviving_id = db.update_card(card_id, **dialog.card_data())
+        if surviving_id != card_id:
+            self.statusBar().showMessage(
+                "You already had that printing, so the two entries were combined.", 8000)
+        self.populate_table()
+        self.select_ids({surviving_id})
+
+    def show_context_menu(self, position):
+        # Right-clicking a row that isn't part of the selection selects just that row
+        index = self.table.indexAt(position)
+        if index.isValid() and not self.table.selectionModel().isRowSelected(index.row()):
+            self.select_ids({self.table.item(index.row(), NAME_COL).data(ID_ROLE)})
+        menu = self.build_context_menu(self.selected_ids())
+        if menu is not None:
+            menu.exec(QCursor.pos())
+
+    def build_context_menu(self, ids):
+        if not ids:
+            return None
+        menu = QMenu(self)
+        if len(ids) == 1:
+            row = self._rows_by_id[ids[0]]
+            menu.addAction("Edit…", lambda: self.edit_card(ids[0]))
+            view = menu.addAction("View on Scryfall", self.open_on_scryfall)
+            view.setEnabled(bool(row["set_code"] and row["collector_number"]))
+            menu.addSeparator()
+        label = "Remove" if len(ids) == 1 else f"Remove {_count(len(ids), 'entry')}"
+        menu.addAction(label, self.on_remove_selected_clicked)
+        return menu
 
     def confirm_remove(self, ids):
         if len(ids) == 1:
@@ -433,8 +483,8 @@ class MainWindow(QMainWindow):
         question = QMessageBox(
             QMessageBox.Icon.Question, "Import",
             f"Found {_count(total, 'card')} in {_count(len(rows), 'entry')}.\n\n"
-            "Look them up on Scryfall and add them to your collection? "
-            "Cards you already own have their quantities increased.",
+            "Look them up on Scryfall? You'll be able to review them and choose "
+            "printings before anything is added to your collection.",
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
         )
         if errors:
@@ -443,7 +493,6 @@ class MainWindow(QMainWindow):
         if question.exec() != QMessageBox.StandardButton.Yes:
             return
 
-        self._import_errors = errors
         self._import_progress = QProgressDialog("Looking up cards on Scryfall…", None, 0, 0, self)
         self._import_progress.setWindowTitle("Import")
         self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
@@ -454,32 +503,18 @@ class MainWindow(QMainWindow):
 
     def _on_import_resolved(self, result):
         self._import_progress.close()
-        card_ids = db.add_cards(importer.card_records(result))
+        review = ImportReviewDialog(result, self)
+        if review.exec() != QDialog.DialogCode.Accepted:
+            self.statusBar().showMessage("Import cancelled, nothing was added.", 8000)
+            return
+        records = review.records()
+        card_ids = db.add_cards(records)
         self.filter_input.clear()
         self.populate_table()
         self.select_ids(set(card_ids))
-
-        imported = sum(row.quantity for row, _ in result.matched)
-        message = f"Imported {_count(imported, 'card')} ({_count(len(result.matched), 'entry')})."
-        details = []
-        if result.unmatched:
-            message += f"\n{_count(len(result.unmatched), 'entry')} couldn't be found on Scryfall."
-            details.append("Not found (skipped):")
-            details += [f"  {row.describe()}" for row in result.unmatched]
-        if result.approximate:
-            message += (f"\n{_count(len(result.approximate), 'entry')} matched by name only, "
-                        "so the printing may differ from your file.")
-            details.append("Matched by name, printing may differ:")
-            details += [f"  {row.describe()}  →  {card.set_name} ({card.set}) #{card.collector_number}"
-                        for row, card in result.approximate]
-        if self._import_errors:
-            details.append("Unreadable lines (skipped):")
-            details += [f"  {error}" for error in self._import_errors]
-
-        box = QMessageBox(QMessageBox.Icon.Information, "Import Complete", message, parent=self)
-        if details:
-            box.setDetailedText("\n".join(details))
-        box.exec()
+        imported = sum(record["quantity"] for record in records)
+        self.statusBar().showMessage(
+            f"Imported {_count(imported, 'card')} ({_count(len(records), 'entry')}).", 10000)
 
     def _on_import_failed(self, message):
         self._import_progress.close()

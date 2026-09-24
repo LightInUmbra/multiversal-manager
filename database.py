@@ -96,6 +96,34 @@ def add_cards(cards):
         return [_add(conn, **card) for card in cards]
 
 
+def update_card(card_id, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
+                collector_number=None, foil=False, rarity=None, artist=None, image_url=None):
+    # Rewrites an entry (e.g. after changing its printing). If that makes it the same
+    # printing + finish as another entry, the two are merged. Returns the surviving id.
+    with _connect() as conn:
+        if scryfall_id:
+            other = conn.execute(
+                "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ? AND id != ?",
+                (scryfall_id, int(foil), card_id),
+            ).fetchone()
+            if other:
+                conn.execute(
+                    "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ? WHERE id = ?",
+                    (quantity, price, _now(), other["id"]),
+                )
+                conn.execute("DELETE FROM collection WHERE id = ?", (card_id,))
+                return other["id"]
+
+        conn.execute("""
+            UPDATE collection SET name = ?, set_name = ?, price = ?, quantity = ?, scryfall_id = ?,
+                set_code = ?, collector_number = ?, foil = ?, rarity = ?, artist = ?, image_url = ?,
+                price_updated = ?
+            WHERE id = ?
+        """, (name, set_name, price, quantity, scryfall_id, set_code, collector_number, int(foil),
+              rarity, artist, image_url, _now() if scryfall_id else None, card_id))
+        return card_id
+
+
 def get_all_cards():
     # Returns every row as a sqlite3.Row (index by column name)
     with _connect() as conn:

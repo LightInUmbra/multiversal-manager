@@ -8,9 +8,9 @@ A desktop app for tracking a Magic: The Gathering card collection: what you own,
 - **Card images**: see a full card preview while adding and when selecting a card in your collection. Images are cached locally after the first load.
 - **Collection value**: a running total of your collection's value, plus total and unique card counts.
 - **Price refresh**: prices older than 24 hours update automatically on startup, or on demand with *Refresh Prices*. Foil and non-foil copies are priced separately.
-- **Quick editing**: double-click a quantity to change it. Adding a printing you already own increases its quantity instead of creating a duplicate row.
+- **Editing**: right-click or double-click a card (or use *Edit…*) to change its printing, finish, quantity or price. Double-click a quantity to change just that. Adding a printing you already own increases its quantity instead of creating a duplicate row.
 - **Filter and sort**: filter by name, set or artist, and sort by any column.
-- **Import**: bring in an existing collection or deck list (File → Import…). Works with CSV exports from Moxfield, ManaBox, Deckbox, this app, and most other tools (columns are recognized by header name), as well as plain-text lists like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. Cards are matched to exact printings on Scryfall. Anything that can't be found, or that could only be matched by name, is listed after the import.
+- **Import**: bring in an existing collection or deck list (File → Import…). Works with CSV exports from Moxfield, ManaBox, Deckbox, this app, and most other tools (columns are recognized by header name), as well as plain-text lists like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. Cards are matched to printings on Scryfall, then shown in a review window before anything is saved. Entries whose printing isn't certain (the file only gave a name, or named a printing Scryfall doesn't have) are listed first, so you can pick the printing you own with a card-image preview.
 - **Export**: save your collection to CSV (File → Export to CSV…).
 - **View on Scryfall**: open the selected printing's Scryfall page.
 
@@ -48,7 +48,9 @@ python -m pytest
 ```
 multiversal-manager/
     main.py               # Main window: collection table, details panel, totals
-    add_card_dialog.py    # Add Card dialog with Scryfall autocomplete + printing picker
+    add_card_dialog.py    # Add / Edit Card dialog with Scryfall autocomplete
+    printing_picker.py    # Printing, finish and price picker with card preview
+    import_review_dialog.py  # Review imported entries and choose printings
     card_image.py         # Card image widget (async loading, never crops the card)
     importer.py           # Parses CSV / text card lists and matches them on Scryfall
     scryfall.py           # Adapter over ScryFunctions + autocomplete, prices, images
