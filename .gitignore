@@ -216,3 +216,8 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Multiversal Manager local data
+collection.db
+image_cache/
+multiversal-manager/
