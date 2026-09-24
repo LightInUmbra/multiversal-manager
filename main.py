@@ -9,10 +9,12 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
+    QProgressDialog,
 )
 
 import background
 import database as db
+import importer
 import scryfall
 from add_card_dialog import AddCardDialog
 from card_image import CardImage
@@ -47,6 +49,12 @@ def _item(value, align_right=False):
     if align_right:
         item.setTextAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
     return item
+
+
+def _count(n, word):
+    # "1 entry", "3 entries", "1,204 cards"
+    plural = word[:-1] + "ies" if word.endswith("y") else word + "s"
+    return f"{n:,} {word if n == 1 else plural}"
 
 
 def _money(value):
@@ -192,11 +200,14 @@ class MainWindow(QMainWindow):
         file_menu = self.menuBar().addMenu("&File")
         add_action = QAction("&Add Card…", self, shortcut=QKeySequence.StandardKey.New)
         add_action.triggered.connect(self.on_add_card_clicked)
+        import_action = QAction("&Import…", self, shortcut=QKeySequence.StandardKey.Open)
+        import_action.triggered.connect(self.import_file)
         export_action = QAction("&Export to CSV…", self)
         export_action.triggered.connect(self.export_csv)
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(add_action)
+        file_menu.addAction(import_action)
         file_menu.addAction(export_action)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
@@ -354,7 +365,7 @@ class MainWindow(QMainWindow):
         if len(ids) == 1:
             question = f"Remove {self._rows_by_id[ids[0]]['name']} from your collection?"
         else:
-            question = f"Remove {len(ids)} entries from your collection?"
+            question = f"Remove {_count(len(ids), 'entry')} from your collection?"
         answer = QMessageBox.question(self, "Remove Cards", question)
         return answer == QMessageBox.StandardButton.Yes
 
@@ -377,7 +388,7 @@ class MainWindow(QMainWindow):
         self._refreshing = True
         self._quiet_refresh = quiet
         self.refresh_button.setEnabled(False)
-        self.statusBar().showMessage(f"Refreshing prices for {len(rows)} entries…")
+        self.statusBar().showMessage(f"Refreshing prices for {_count(len(rows), 'entry')}…")
         work = [(r["id"], r["scryfall_id"], bool(r["foil"])) for r in rows]
         background.run(_fetch_prices, work, on_success=self._on_prices, on_error=self._on_prices_failed)
 
@@ -388,7 +399,7 @@ class MainWindow(QMainWindow):
         # Rows removed while the refresh was running just don't match anything
         db.update_prices(updates)
         self.populate_table()
-        message = f"Updated prices for {len(updates)} entries."
+        message = f"Updated prices for {_count(len(updates), 'entry')}."
         if missing:
             message += f" {missing} couldn't be found on Scryfall."
         self.statusBar().showMessage(message, 8000)
@@ -401,6 +412,78 @@ class MainWindow(QMainWindow):
         else:
             QMessageBox.warning(self, "Refresh Prices", f"Couldn't reach Scryfall:\n{message}")
             self.statusBar().clearMessage()
+
+    def import_file(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Import Cards", "",
+            "Card lists (*.csv *.txt *.dec *.dek);;All files (*)",
+        )
+        if not path:
+            return
+        try:
+            rows, errors = importer.parse_file(path)
+        except (OSError, UnicodeDecodeError) as error:
+            QMessageBox.warning(self, "Import", f"Couldn't read that file:\n{error}")
+            return
+        if not rows:
+            QMessageBox.warning(self, "Import", "\n".join(errors) or "No cards found in the file.")
+            return
+
+        total = sum(row.quantity for row in rows)
+        question = QMessageBox(
+            QMessageBox.Icon.Question, "Import",
+            f"Found {_count(total, 'card')} in {_count(len(rows), 'entry')}.\n\n"
+            "Look them up on Scryfall and add them to your collection? "
+            "Cards you already own have their quantities increased.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
+        )
+        if errors:
+            question.setInformativeText(f"{_count(len(errors), 'line')} couldn't be read and will be skipped.")
+            question.setDetailedText("\n".join(errors))
+        if question.exec() != QMessageBox.StandardButton.Yes:
+            return
+
+        self._import_errors = errors
+        self._import_progress = QProgressDialog("Looking up cards on Scryfall…", None, 0, 0, self)
+        self._import_progress.setWindowTitle("Import")
+        self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
+        self._import_progress.setMinimumDuration(0)
+        self._import_progress.show()
+        background.run(importer.resolve, rows, on_success=self._on_import_resolved,
+                       on_error=self._on_import_failed)
+
+    def _on_import_resolved(self, result):
+        self._import_progress.close()
+        card_ids = db.add_cards(importer.card_records(result))
+        self.filter_input.clear()
+        self.populate_table()
+        self.select_ids(set(card_ids))
+
+        imported = sum(row.quantity for row, _ in result.matched)
+        message = f"Imported {_count(imported, 'card')} ({_count(len(result.matched), 'entry')})."
+        details = []
+        if result.unmatched:
+            message += f"\n{_count(len(result.unmatched), 'entry')} couldn't be found on Scryfall."
+            details.append("Not found (skipped):")
+            details += [f"  {row.describe()}" for row in result.unmatched]
+        if result.approximate:
+            message += (f"\n{_count(len(result.approximate), 'entry')} matched by name only, "
+                        "so the printing may differ from your file.")
+            details.append("Matched by name, printing may differ:")
+            details += [f"  {row.describe()}  →  {card.set_name} ({card.set}) #{card.collector_number}"
+                        for row, card in result.approximate]
+        if self._import_errors:
+            details.append("Unreadable lines (skipped):")
+            details += [f"  {error}" for error in self._import_errors]
+
+        box = QMessageBox(QMessageBox.Icon.Information, "Import Complete", message, parent=self)
+        if details:
+            box.setDetailedText("\n".join(details))
+        box.exec()
+
+    def _on_import_failed(self, message):
+        self._import_progress.close()
+        QMessageBox.warning(self, "Import", f"Couldn't reach Scryfall, nothing was imported:\n{message}")
 
     def export_csv(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export Collection", "collection.csv", "CSV files (*.csv)")

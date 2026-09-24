@@ -81,6 +81,23 @@ def printing_label(card):
     return f"{card.set_name} ({card.set}) #{card.collector_number} - {price_text}"
 
 
+def card_record(card, foil, quantity, price=None):
+    # Keyword arguments for database.add_card, built from a Scryfall printing
+    return {
+        "name": card.name,
+        "set_name": card.set_name,
+        "price": price_for(card, foil) if price is None else price,
+        "quantity": quantity,
+        "scryfall_id": card.id,
+        "set_code": card.set,
+        "collector_number": card.collector_number,
+        "foil": foil,
+        "rarity": card.rarity,
+        "artist": card.artist,
+        "image_url": image_url_for(card),
+    }
+
+
 def scryfall_page(set_code, collector_number):
     return f"https://scryfall.com/card/{set_code.lower()}/{collector_number}"
 
@@ -105,23 +122,34 @@ def get_printings(name):
     return sorted(printings, key=lambda c: c.released_at or "", reverse=True)
 
 
-def get_cards_by_id(scryfall_ids):
-    # {scryfall_id: Card} for every id Scryfall still knows about
-    ids = list(dict.fromkeys(scryfall_ids))
-    found = {}
-    for start in range(0, len(ids), _COLLECTION_BATCH):
-        batch = ids[start:start + _COLLECTION_BATCH]
+def get_collection(identifiers):
+    # Looks up many cards at once. identifiers are dicts in any of Scryfall's forms:
+    # {"id"}, {"set", "collector_number"}, {"name", "set"} or {"name"}.
+    # Returns the Cards found; identifiers with no match are simply absent.
+    cards = []
+    for start in range(0, len(identifiers), _COLLECTION_BATCH):
         response = requests.post(
             f"{sf.BASE_URL}/cards/collection",
-            json={"identifiers": [{"id": i} for i in batch]},
+            json={"identifiers": identifiers[start:start + _COLLECTION_BATCH]},
             headers=HEADERS,
             timeout=TIMEOUT,
         )
         time.sleep(_REQUEST_DELAY)
         response.raise_for_status()
-        for data in response.json()["data"]:
-            found[data["id"]] = Card(data)
-    return found
+        cards.extend(Card(data) for data in response.json()["data"])
+    return cards
+
+
+def get_cards_by_id(scryfall_ids):
+    # {scryfall_id: Card} for every id Scryfall still knows about
+    ids = list(dict.fromkeys(scryfall_ids))
+    return {card.id: card for card in get_collection([{"id": i} for i in ids])}
+
+
+def get_set_codes():
+    # {lowercased set name: set code}, for files that only give the set's full name
+    data = _get_json("/sets")
+    return {s["name"].lower(): s["code"] for s in data["data"]} if data else {}
 
 
 def fetch_image(url):

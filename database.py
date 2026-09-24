@@ -59,30 +59,41 @@ def create_table():
                 conn.execute(f"ALTER TABLE collection ADD COLUMN {column} {definition}")
 
 
-def add_card(name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
-             collector_number=None, foil=False, rarity=None, artist=None, image_url=None):
+def _add(conn, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
+         collector_number=None, foil=False, rarity=None, artist=None, image_url=None):
     # The same printing + finish only gets one row -- adding it again bumps the quantity
     # (and refreshes the price) instead of creating a duplicate. Returns the row id.
-    with _connect() as conn:
-        if scryfall_id:
-            existing = conn.execute(
-                "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ?",
-                (scryfall_id, int(foil)),
-            ).fetchone()
-            if existing:
-                conn.execute(
-                    "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ? WHERE id = ?",
-                    (quantity, price, _now(), existing["id"]),
-                )
-                return existing["id"]
+    if scryfall_id:
+        existing = conn.execute(
+            "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ?",
+            (scryfall_id, int(foil)),
+        ).fetchone()
+        if existing:
+            conn.execute(
+                "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ? WHERE id = ?",
+                (quantity, price, _now(), existing["id"]),
+            )
+            return existing["id"]
 
-        cursor = conn.execute("""
-            INSERT INTO collection (name, set_name, price, quantity, scryfall_id, set_code,
-                                    collector_number, foil, rarity, artist, image_url, price_updated)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (name, set_name, price, quantity, scryfall_id, set_code, collector_number,
-              int(foil), rarity, artist, image_url, _now() if scryfall_id else None))
-        return cursor.lastrowid
+    cursor = conn.execute("""
+        INSERT INTO collection (name, set_name, price, quantity, scryfall_id, set_code,
+                                collector_number, foil, rarity, artist, image_url, price_updated)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (name, set_name, price, quantity, scryfall_id, set_code, collector_number,
+          int(foil), rarity, artist, image_url, _now() if scryfall_id else None))
+    return cursor.lastrowid
+
+
+def add_card(name, set_name, price, quantity, **details):
+    with _connect() as conn:
+        return _add(conn, name, set_name, price, quantity, **details)
+
+
+def add_cards(cards):
+    # Bulk version of add_card for imports: cards is a list of add_card keyword
+    # dicts, all written in one transaction. Returns the row ids.
+    with _connect() as conn:
+        return [_add(conn, **card) for card in cards]
 
 
 def get_all_cards():

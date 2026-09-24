@@ -204,17 +204,9 @@ class AddCardDialog(QDialog):
 
     def card_data(self):
         # Keyword arguments for database.add_card
-        card = self.selected_printing()
-        return {
-            "name": card.name,
-            "set_name": card.set_name,
-            "price": self.price_input.value(),
-            "quantity": self.quantity_input.value(),
-            "scryfall_id": card.id,
-            "set_code": card.set,
-            "collector_number": card.collector_number,
-            "foil": self.foil_check.isChecked(),
-            "rarity": card.rarity,
-            "artist": card.artist,
-            "image_url": scryfall.image_url_for(card),
-        }
+        return scryfall.card_record(
+            self.selected_printing(),
+            foil=self.foil_check.isChecked(),
+            quantity=self.quantity_input.value(),
+            price=self.price_input.value(),
+        )
