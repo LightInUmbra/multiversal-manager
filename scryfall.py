@@ -7,6 +7,9 @@ fuzzy name lookup, batch price refresh, and image downloads -- live here.
 
 Everything in this module does blocking network I/O, so the UI calls it from
 background threads (see background.py).
+
+In offline mode (File → Work Offline) nothing here touches the internet: lookups
+answer from the downloaded card list instead, and downloads raise OfflineError.
 """
 
 # Imports
@@ -18,6 +21,8 @@ import time
 from pathlib import Path
 
 import requests
+
+import database
 
 BASE_DIR = Path(__file__).resolve().parent
 
@@ -49,6 +54,19 @@ _REQUEST_DELAY = 0.1
 
 # /cards/collection accepts at most 75 identifiers per request
 _COLLECTION_BATCH = 75
+
+
+# Set from the File → Work Offline setting
+offline = False
+
+
+class OfflineError(Exception):
+    pass
+
+
+def _require_online():
+    if offline:
+        raise OfflineError("Offline mode is on (File → Work Offline), so nothing is downloaded.")
 
 
 # Helpers
@@ -123,10 +141,45 @@ def scryfall_page(set_code, collector_number):
     return f"https://scryfall.com/card/{set_code.lower()}/{collector_number}"
 
 
+# Offline lookups, from the downloaded card list (database.local_printings)
+
+_PRICE_KEYS = {0: "usd", 1: "usd_foil", 2: "usd_etched"}
+
+
+def _local_cards(**query):
+    # Cards shaped like Scryfall's, one per printing, newest first
+    cards = {}
+    for row in database.local_printings(**query):
+        data = cards.setdefault(row["scryfall_id"], {
+            "id": row["scryfall_id"], "name": row["name"], "set": row["set_code"],
+            "set_name": row["set_name"], "collector_number": row["collector_number"],
+            "rarity": row["rarity"], "artist": row["artist"], "released_at": row["released_at"],
+            "image_uris": {"normal": row["image_url"]}, "finishes": [], "prices": {},
+        })
+        data["finishes"].append(FINISHES[row["foil"]][0])
+        data["prices"][_PRICE_KEYS[row["foil"]]] = row["price"]
+    return [Card(data) for data in cards.values()]
+
+
+# Scryfall identifier fields -> local_printings arguments
+_LOCAL_FIELDS = {"id": "scryfall_id", "set": "set_code", "collector_number": "collector_number", "name": "name"}
+
+
+def _local_collection(identifiers):
+    # get_collection, offline: the newest matching printing for each identifier
+    cards = []
+    for identifier in identifiers:
+        found = _local_cards(**{_LOCAL_FIELDS[key]: value for key, value in identifier.items()})
+        cards.extend(found[:1])
+    return cards
+
+
 # API calls
 
 def autocomplete(partial_name):
     # Up to 20 card names matching what's been typed so far
+    if offline:
+        return database.card_names(partial_name)
     data = _get_json("/cards/autocomplete", {"q": partial_name})
     return data["data"] if data else []
 
@@ -134,6 +187,8 @@ def autocomplete(partial_name):
 def get_printings(name):
     # Every paper printing of a card, newest first. Falls back to a fuzzy
     # lookup so "lightning bolt" or a small typo still finds the card.
+    if offline:
+        return _local_cards(name=name)
     printings = sf.get_all_printings(name)
     if not printings:
         match = _get_json("/cards/named", {"fuzzy": name})
@@ -147,6 +202,8 @@ def get_collection(identifiers):
     # Looks up many cards at once. identifiers are dicts in any of Scryfall's forms:
     # {"id"}, {"set", "collector_number"}, {"name", "set"} or {"name"}.
     # Returns the Cards found; identifiers with no match are simply absent.
+    if offline:
+        return _local_collection(identifiers)
     cards = []
     for start in range(0, len(identifiers), _COLLECTION_BATCH):
         response = requests.post(
@@ -169,7 +226,9 @@ def get_cards_by_id(scryfall_ids):
 
 def fetch_prices(rows):
     # rows: list of (row_id, scryfall_id, foil). Returns ([(row_id, current price)], missing count).
-    cards = get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
+    # Offline, saved prices are kept rather than restamped as fresh from old card data.
+    _require_online()
+    cards =get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
     updates, missing = [], 0
     for row_id, scryfall_id, foil in rows:
         card = cards.get(scryfall_id)
@@ -182,20 +241,26 @@ def fetch_prices(rows):
 
 def fuzzy_card(name):
     # Scryfall's best guess for a misspelled or alternate card name, or None
-    data = _get_json("/cards/named", {"fuzzy": name})
+    if offline:
+        return None
+    data =_get_json("/cards/named", {"fuzzy": name})
     return Card(data) if data else None
 
 
 def get_set_codes():
     # {lowercased set name: set code}, for files that only give the set's full name
-    data = _get_json("/sets")
+    if offline:
+        return database.set_codes()
+    data =_get_json("/sets")
     return {s["name"].lower(): s["code"] for s in data["data"]} if data else {}
 
 
 def bulk_info(kind="default-cards"):
     # Metadata for one of Scryfall's daily bulk files: updated_at, jsonl_download_uri,
     # compressed_size. default-cards is every printing (English, or its only language).
-    return _get_json(f"/bulk-data/{kind}")
+    # The first step of every card data / price history update, so it guards them all.
+    _require_online()
+    return_get_json(f"/bulk-data/{kind}")
 
 
 def iter_bulk_data(info, progress=None):
@@ -220,6 +285,7 @@ def fetch_image(url):
     if cache_file.exists():
         return cache_file.read_bytes()
 
+    _require_online()
     response = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=TIMEOUT)
     response.raise_for_status()
     cache_file.write_bytes(response.content)

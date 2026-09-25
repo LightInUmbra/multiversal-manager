@@ -88,7 +88,11 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Your data never leaves your machine. Your collection and price history live in `collection.db` next to `main.py`, backups go in `backups/`, and card images are cached in `image_cache/`. All three are git-ignored.
+Your data never leaves your machine. Your collection and price history live in `collection.db` next to `main.py`, settings go in `settings.ini`, backups go in `backups/`, and card images are cached in `image_cache/`. All of it is git-ignored.
+
+### Taking it offline
+
+Everything lives in that one folder, so you can copy it to a USB stick or another computer and pick up right where you left off. No internet where you're going? Turn on *File → Work Offline*. Adding, editing and importing cards then run entirely off the downloaded card data, using the prices from its last update, and you'll only see card images you've already viewed. Just open the Deck Builder or Finance once while you're online first, so the card data is there to work from.
 
 ### Running the tests
 

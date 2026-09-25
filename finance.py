@@ -9,6 +9,7 @@ and 90 days of back history (from MTGJSON); the mode only decides what's listed.
 # Imports
 import json
 from datetime import date, timedelta
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSettings, QTimer
 from PySide6.QtGui import QAction, QCursor, QKeySequence
@@ -42,8 +43,20 @@ FINISH_LABELS = {0: "", 1: "Foil", 2: "Etched"}
 BACKFILL_EVERY = timedelta(days=7)
 
 
+# Settings sit next to the collection (not in the registry), so the whole app folder is portable
+SETTINGS_FILE = Path(db.DB_NAME).with_name("settings.ini")
+
+
 def _settings():
-    return QSettings("Multiversal Manager", "Multiversal Manager")
+    first_run = not SETTINGS_FILE.exists()
+    settings = QSettings(str(SETTINGS_FILE), QSettings.Format.IniFormat)
+    if first_run:
+        # Settings used to live in the registry; bring them along once
+        old = QSettings("Multiversal Manager", "Multiversal Manager")
+        for key in old.allKeys():
+            settings.setValue(key, old.value(key))
+        settings.sync()
+    return settings
 
 
 def _printings(n):
@@ -64,6 +77,8 @@ def watch_records(data):
         "rarity": card.rarity,
         "image_url": scryfall.image_url_for(card),
         "price": float(prices[key]) if prices.get(key) else None,
+        "artist": card.artist,
+        "released_at": card.released_at,
     } for finish, (code, key) in FINISHES.items() if finish in card.finishes]
 
 

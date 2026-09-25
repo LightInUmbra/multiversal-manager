@@ -80,7 +80,7 @@ class PrintingPicker(QWidget):
         self._lookup_name = name
         self._set_printings([])  # before storing the choice: clearing uses up any pending one
         self._pending = (select_id, foil, price)
-        self.status_label.setText(f"Searching Scryfall for “{name}”…")
+        self.status_label.setText(f"Looking up “{name}”…")
         background.run(_printings, name, on_success=self._on_printings, on_error=self._on_failed)
 
     def _on_printings(self, result):
@@ -88,7 +88,8 @@ class PrintingPicker(QWidget):
         if name != self._lookup_name:
             return
         if not printings:
-            self.status_label.setText(f"No card found matching “{name}”.")
+            where = " in the downloaded card data" if scryfall.offline else ""
+            self.status_label.setText(f"No card found matching “{name}”{where}.")
             self.image.clear_image("No card found")
             self.loaded.emit(False)
             return

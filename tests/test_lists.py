@@ -67,6 +67,7 @@ def test_card_search_owned_and_explore(temp_db):
     assert names(identity="U") == ["Opt", "Sol Ring"]             # within a mono-blue commander's colors
     rows, total = temp_db.search_cards(False, limit=2)
     assert (len(rows), total) == (2, 4)
+    assert temp_db.card_names("l") == ["Lightning Bolt", "Llanowar Elves", "Sol Ring"]  # prefix matches first
     [opt] = [r for r in temp_db.search_cards(False, text="opt")[0]]
     assert opt["owned"] == 3
 

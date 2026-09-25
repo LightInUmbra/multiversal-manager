@@ -5,7 +5,7 @@ import sys
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QItemSelectionModel, QSettings, QTimer, QUrl
+from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -99,8 +99,10 @@ class MainWindow(QMainWindow):
         self._rows_by_id = {}
         self._refreshing = False
         self._quiet_refresh = False
+        self.settings = finance._settings()
 
         self._build_menu()
+        self.set_offline(self.settings.value("offline", False, type=bool))
 
         # Filter box
         self.filter_input = QLineEdit()
@@ -109,7 +111,6 @@ class MainWindow(QMainWindow):
         self.filter_input.textChanged.connect(self.apply_filter)
 
         # How far back the Change column and summary compare prices (remembered between runs)
-        self.settings = QSettings("Multiversal Manager", "Multiversal Manager")
         self.period_combo = QComboBox()
         for label, _ in trends.PERIODS:
             self.period_combo.addItem(label)
@@ -238,7 +239,7 @@ class MainWindow(QMainWindow):
         self.show_selected_card()
 
         stale = [row for row in self._rows_by_id.values() if _price_is_stale(row)]
-        if stale:
+        if stale and not scryfall.offline:
             self.refresh_prices(stale, quiet=True)
 
         # Once a day, quietly, in the background
@@ -263,7 +264,15 @@ class MainWindow(QMainWindow):
         file_menu.addAction("&Restore from Backup…", self.restore_backup)
         file_menu.addAction("Open Backups &Folder", self.open_backups_folder)
         file_menu.addSeparator()
+        self.offline_action = QAction("Work &Offline", self, checkable=True)
+        self.offline_action.setStatusTip("Use only the downloaded card data; nothing is downloaded")
+        self.offline_action.triggered.connect(self.on_offline_toggled)
+        file_menu.addAction(self.offline_action)
+        file_menu.addSeparator()
         file_menu.addAction(quit_action)
+        self.offline_label = QLabel("Offline")
+        self.offline_label.setToolTip("Working offline from the downloaded card data (File → Work Offline)")
+        self.statusBar().addPermanentWidget(self.offline_label)
 
         view_menu = self.menuBar().addMenu("&View")
         trends_action = QAction("Collection &Trends…", self, shortcut="Ctrl+T")
@@ -280,6 +289,25 @@ class MainWindow(QMainWindow):
         about_action = QAction(f"&About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    # Offline mode
+
+    def set_offline(self, on):
+        # Every window reads scryfall.offline when it goes to download something
+        scryfall.offline = on
+        self.settings.setValue("offline", on)
+        self.offline_action.setChecked(on)
+        self.offline_label.setVisible(on)
+
+    def on_offline_toggled(self, on):
+        self.set_offline(on)
+        if on and not db.has_card_database():
+            QMessageBox.information(
+                self, "Work Offline",
+                "Working offline looks cards up in the card database, which hasn't been downloaded "
+                "yet, so adding and importing cards won't find anything.\n\n"
+                "To download it, turn Work Offline off and open the Deck Builder or Finance once "
+                "(about 80 MB).")
 
     # Table
 
@@ -609,7 +637,8 @@ class MainWindow(QMainWindow):
         if self._quiet_refresh:
             self.statusBar().showMessage("Couldn't refresh prices (offline?). Showing saved prices.", 8000)
         else:
-            QMessageBox.warning(self, "Refresh Prices", f"Couldn't reach Scryfall:\n{message}")
+            QMessageBox.warning(self, "Refresh Prices",
+                                message if scryfall.offline else f"Couldn't reach Scryfall:\n{message}")
             self.statusBar().clearMessage()
 
     def import_file(self):

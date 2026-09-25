@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
 
 import background
 import copy_details
+import database
 import scryfall
 from printing_picker import PrintingPicker
 
@@ -15,6 +16,9 @@ AUTOCOMPLETE_DELAY_MS = 300
 
 
 def _autocomplete(text):
+    # The downloaded card database when there is one (instant, works offline), else Scryfall
+    if database.has_card_database():
+        return text, database.card_names(text)
     return text, scryfall.autocomplete(text)
 
 

@@ -172,10 +172,18 @@ def create_table():
                 PRIMARY KEY (scryfall_id, foil)
             )
         """)
-        if "tracked" not in {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}:
+        watch_columns = {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}
+        if "tracked" not in watch_columns:
             # Before the full card list, the watchlist held only what was tracked
             conn.execute("ALTER TABLE watchlist ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0")
             conn.execute("UPDATE watchlist SET tracked = 1")
+        # For offline lookups (see local_printings); filled in by the next card data download
+        for column in ("artist", "released_at"):
+            if column not in watch_columns:
+                conn.execute(f"ALTER TABLE watchlist ADD COLUMN {column} TEXT")
+        conn.execute("CREATE INDEX IF NOT EXISTS watchlist_name ON watchlist (name COLLATE NOCASE)")
+        conn.execute("CREATE INDEX IF NOT EXISTS watchlist_printing "
+                     "ON watchlist (set_code COLLATE NOCASE, collector_number COLLATE NOCASE)")
 
 
 def merge_notes(existing, new):
@@ -356,21 +364,24 @@ def watch_cards(records, track_new=False):
     """Adds printings to the watchlist or refreshes the ones already there (keeping
     whether they're tracked; new ones are tracked if track_new). records are dicts with
     scryfall_id, foil, name, set_code, set_name, collector_number, rarity, image_url and
-    price (None when Scryfall has none). Returns how many were written."""
+    price (None when Scryfall has none), and optionally artist and released_at.
+    Returns how many were written."""
     stamp, today = _now(), _today()
     with _connect() as conn:
         for r in records:
             conn.execute("""
                 INSERT INTO watchlist (scryfall_id, foil, name, set_code, set_name, collector_number,
-                                       rarity, image_url, price, price_updated, tracked)
+                                       rarity, image_url, price, price_updated, tracked, artist, released_at)
                 VALUES (:scryfall_id, :foil, :name, :set_code, :set_name, :collector_number,
-                        :rarity, :image_url, :price, :stamp, :tracked)
+                        :rarity, :image_url, :price, :stamp, :tracked, :artist, :released_at)
                 ON CONFLICT (scryfall_id, foil) DO UPDATE SET name = excluded.name,
                     set_code = excluded.set_code, set_name = excluded.set_name,
                     collector_number = excluded.collector_number, rarity = excluded.rarity,
                     image_url = excluded.image_url, price = excluded.price,
-                    price_updated = excluded.price_updated
-            """, {**r, "foil": int(r["foil"]), "stamp": stamp, "tracked": int(track_new)})
+                    price_updated = excluded.price_updated, artist = excluded.artist,
+                    released_at = excluded.released_at
+            """, {"artist": None, "released_at": None, **r, "foil": int(r["foil"]), "stamp": stamp,
+                  "tracked": int(track_new)})
             # Only store a point when the price moved: tracking every card means ~150k
             # printings a day, and "latest on or before a day" lookups work on sparse history
             if r["price"]:
@@ -398,6 +409,36 @@ def get_watchlist(days=None, tracked_only=False):
             FROM watchlist w {"WHERE w.tracked" if tracked_only else ""}
             ORDER BY w.name COLLATE NOCASE
         """, params).fetchall()
+
+
+def local_printings(scryfall_id=None, set_code=None, collector_number=None, name=None):
+    """Offline lookups: rows of the downloaded card list (every paper printing, one row
+    per finish) matching all the given fields, newest printing first. name matches a
+    card's full name, or its front face ("Fire" finds "Fire // Ice")."""
+    where, params = [], []
+    for column, value in (("scryfall_id", scryfall_id), ("set_code", set_code),
+                          ("collector_number", collector_number)):
+        if value:
+            where.append(f"{column} = ? COLLATE NOCASE")
+            params.append(value)
+
+    def rows(name_test, name_param):
+        tests, values = where + ([name_test] if name else []), params + ([name_param] if name else [])
+        with _connect() as conn:
+            return conn.execute(f"""
+                SELECT * FROM watchlist WHERE {' AND '.join(tests) or '1'}
+                ORDER BY released_at DESC, set_code, collector_number, foil
+            """, values).fetchall()
+
+    # The exact name uses the index; the front-face match scans, so it's only the fallback
+    return rows("name = ? COLLATE NOCASE", name) or (rows("name LIKE ?", f"{name} // %") if name else [])
+
+
+def set_codes():
+    # {lowercased set name: set code} from the downloaded card list
+    with _connect() as conn:
+        return {row[0]: row[1] for row in conn.execute(
+            "SELECT DISTINCT LOWER(set_name), set_code FROM watchlist WHERE set_name IS NOT NULL")}
 
 
 def track(keys, tracked=True):
@@ -562,6 +603,14 @@ def replace_oracle_cards(records):
 def has_card_database():
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards)").fetchone()[0] == 1
+
+
+def card_names(text, limit=20):
+    # Up to `limit` card names containing text, names that start with it first
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT name FROM oracle_cards WHERE name LIKE ? ORDER BY name NOT LIKE ?, name LIMIT ?",
+            (f"%{text}%", f"{text}%", limit))]
 
 
 def card_info(name):

@@ -221,6 +221,7 @@ __marimo__/
 collection.db
 image_cache/
 backups/
+settings.ini
 multiversal-manager/
 
 # Claude Code personal settings
