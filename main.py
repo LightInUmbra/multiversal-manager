@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
 )
 
 import background
+import copy_details
 import database as db
 import finance
 import importer
@@ -36,9 +37,9 @@ SCRYFALL_NOTICE = "Card data, prices and images provided by Scryfall (scryfall.c
 # Scryfall updates prices about once a day, so anything older is refreshed on startup
 PRICE_MAX_AGE = timedelta(hours=24)
 
-COLUMNS = ["Name", "Set", "#", "Finish", "Qty", "Price", "Total", "Change"]
-(NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, QTY_COL, PRICE_COL, TOTAL_COL,
- CHANGE_COL) = range(len(COLUMNS))
+COLUMNS = ["Name", "Set", "#", "Finish", "Cond.", "Lang.", "Qty", "Price", "Total", "Change"]
+(NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, CONDITION_COL, LANGUAGE_COL, QTY_COL, PRICE_COL,
+ TOTAL_COL, CHANGE_COL) = range(len(COLUMNS))
 
 ID_ROLE = Qt.ItemDataRole.UserRole          # database id, stored on the Name cell
 PERCENT_ROLE = Qt.ItemDataRole.UserRole + 1  # % price change, stored on the Change cell
@@ -174,7 +175,8 @@ class MainWindow(QMainWindow):
         self.detail_name.setStyleSheet("font-size: 15px; font-weight: bold;")
         self.detail_name.setWordWrap(True)
         self.detail_fields = {label: QLabel() for label in
-                              ("Set", "Rarity", "Artist", "Price", "Owned", "Subtotal", "Price as of")}
+                              ("Set", "Rarity", "Artist", "Condition", "Language", "Notes", "Price",
+                               "Owned", "Subtotal", "Price as of")}
         detail_form = QFormLayout()
         for label, widget in self.detail_fields.items():
             widget.setWordWrap(True)
@@ -296,6 +298,8 @@ class MainWindow(QMainWindow):
         for row_index, row in enumerate(rows):
             name_item = _item(row["name"])
             name_item.setData(ID_ROLE, row["id"])
+            if row["notes"]:
+                name_item.setToolTip(row["notes"])
 
             set_label = f"{row['set_name']} ({row['set_code']})" if row["set_code"] else row["set_name"]
             number = row["collector_number"] or ""
@@ -310,6 +314,12 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_index, SET_COL, _item(set_label))
             self.table.setItem(row_index, NUMBER_COL, _item(int(number) if number.isdigit() else number))
             self.table.setItem(row_index, FINISH_COL, _item("Foil" if row["foil"] else ""))
+            condition_item = _item(row["condition"])
+            condition_item.setToolTip(copy_details.CONDITIONS.get(row["condition"], row["condition"]))
+            self.table.setItem(row_index, CONDITION_COL, condition_item)
+            language_item = _item(row["language"].upper())
+            language_item.setToolTip(copy_details.language_label(row["language"]))
+            self.table.setItem(row_index, LANGUAGE_COL, language_item)
             self.table.setItem(row_index, QTY_COL, quantity_item)
             self.table.setItem(row_index, PRICE_COL, _item(row["price"], True))
             self.table.setItem(row_index, TOTAL_COL, _item(total, True))
@@ -381,7 +391,8 @@ class MainWindow(QMainWindow):
         needle = self.filter_input.text().strip().lower()
         for row_index in range(self.table.rowCount()):
             row = self._rows_by_id[self.table.item(row_index, NAME_COL).data(ID_ROLE)]
-            haystack = " ".join(str(row[key] or "") for key in ("name", "set_name", "set_code", "artist")).lower()
+            haystack = " ".join(str(row[key] or "") for key in
+                                ("name", "set_name", "set_code", "artist", "notes")).lower()
             self.table.setRowHidden(row_index, bool(needle) and needle not in haystack)
 
     def update_summary(self):
@@ -448,6 +459,10 @@ class MainWindow(QMainWindow):
         fields["Set"].setText(set_text)
         fields["Rarity"].setText((row["rarity"] or "—").capitalize())
         fields["Artist"].setText(row["artist"] or "—")
+        condition = row["condition"]
+        fields["Condition"].setText(f"{copy_details.CONDITIONS.get(condition, condition)} ({condition})")
+        fields["Language"].setText(copy_details.language_label(row["language"]))
+        fields["Notes"].setText(row["notes"] or "—")
         fields["Price"].setText(_money(row["price"]))
         fields["Owned"].setText(str(row["quantity"]))
         fields["Subtotal"].setText(_money(row["price"] * row["quantity"]))
@@ -633,8 +648,8 @@ class MainWindow(QMainWindow):
         path, _ = QFileDialog.getSaveFileName(self, "Export Collection", "collection.csv", "CSV files (*.csv)")
         if not path:
             return
-        fields = ["name", "set_code", "set_name", "collector_number", "foil", "quantity",
-                  "price", "rarity", "artist", "scryfall_id"]
+        fields = ["name", "set_code", "set_name", "collector_number", "foil", "condition", "language",
+                  "quantity", "price", "rarity", "artist", "notes", "scryfall_id"]
         try:
             with open(path, "w", newline="", encoding="utf-8") as f:
                 writer = csv.writer(f)

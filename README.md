@@ -13,6 +13,7 @@ The desktop app comes first. Web and mobile versions are planned, and all three 
 ### Your collection
 
 - **Printing-exact entries.** Type a card name and suggestions appear as you go. Pick the exact printing and finish you own, and the set, collector number, rarity, artist and price fill in on their own.
+- **Condition, language and notes.** Record each entry's condition (NM, LP, MP, HP, DMG) and language, and add notes like "signed" or "in the red binder". Copies of the same printing in a different condition or language get their own entry. Imports read these from other tools' CSV exports too.
 - **Live value.** A running total of what your collection is worth, with card counts and each card's price movement over the last 24 hours, 7, 30 or 90 days, or all time.
 - **Price history per card.** Select any card to chart its price over time. Movement counts market changes only; adding or removing cards never shows up as a gain or loss.
 - **Trends** (Ctrl+T). Your collection's value over time, plus its biggest gainers and losers.
@@ -47,7 +48,6 @@ The goal is for the desktop, web and mobile versions to stay in sync, so a card 
 
 ### Coming next on desktop
 
-- Condition, language and notes for each copy
 - Automatic database backups
 - Decks, binders and wishlists
 - Offline card search
@@ -96,6 +96,7 @@ multiversal-manager/
     trends.py                # Price change math and the Trends window
     database.py              # SQLite storage, price history and schema upgrades
     importer.py              # CSV / text list parsing and printing matching
+    copy_details.py          # Conditions and languages, and reading them from other tools
     import_review_dialog.py  # Review step for imports
     add_card_dialog.py       # Add / Edit Card with live name suggestions
     printing_picker.py       # Printing, finish and price picker with card preview

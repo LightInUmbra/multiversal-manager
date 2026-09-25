@@ -20,6 +20,10 @@ _EXTRA_COLUMNS = {
     "artist": "TEXT",
     "image_url": "TEXT",
     "price_updated": "TEXT",
+    # Per entry: the same printing + finish in another condition or language is its own entry
+    "condition": "TEXT NOT NULL DEFAULT 'NM'",
+    "language": "TEXT NOT NULL DEFAULT 'en'",
+    "notes": "TEXT NOT NULL DEFAULT ''",
 }
 
 
@@ -121,31 +125,48 @@ def create_table():
             conn.execute("UPDATE watchlist SET tracked = 1")
 
 
+def merge_notes(existing, new):
+    # Notes of two entries being combined, without repeating a note that's already there
+    existing, new = (existing or "").strip(), (new or "").strip()
+    if not new or new in existing:
+        return existing
+    return f"{existing}\n{new}" if existing else new
+
+
+def _same_copies(conn, scryfall_id, foil, condition, language, exclude_id=None):
+    # The entry already holding this printing + finish + condition + language, if any
+    return conn.execute("""
+        SELECT id, notes FROM collection
+        WHERE scryfall_id = ? AND foil = ? AND condition = ? AND language = ? AND id IS NOT ?
+    """, (scryfall_id, int(foil), condition, language, exclude_id)).fetchone()
+
+
 def _add(conn, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
          collector_number=None, foil=False, rarity=None, artist=None, image_url=None,
-         market_price=None):
-    # The same printing + finish only gets one row -- adding it again bumps the quantity
-    # (and refreshes the price) instead of creating a duplicate. Returns the row id.
-    # market_price is Scryfall's price, recorded to history even if `price` was overridden.
+         market_price=None, condition="NM", language="en", notes=""):
+    # The same printing, finish, condition and language only gets one row -- adding it
+    # again bumps the quantity (and refreshes the price) instead of creating a duplicate.
+    # Returns the row id. market_price is Scryfall's price, recorded to history even if
+    # `price` was overridden.
     _record_price(conn, scryfall_id, foil, market_price)
     if scryfall_id:
-        existing = conn.execute(
-            "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ?",
-            (scryfall_id, int(foil)),
-        ).fetchone()
+        existing = _same_copies(conn, scryfall_id, foil, condition, language)
         if existing:
             conn.execute(
-                "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ? WHERE id = ?",
-                (quantity, price, _now(), existing["id"]),
+                "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ?, notes = ? "
+                "WHERE id = ?",
+                (quantity, price, _now(), merge_notes(existing["notes"], notes), existing["id"]),
             )
             return existing["id"]
 
     cursor = conn.execute("""
         INSERT INTO collection (name, set_name, price, quantity, scryfall_id, set_code,
-                                collector_number, foil, rarity, artist, image_url, price_updated)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                                collector_number, foil, rarity, artist, image_url, price_updated,
+                                condition, language, notes)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (name, set_name, price, quantity, scryfall_id, set_code, collector_number,
-          int(foil), rarity, artist, image_url, _now() if scryfall_id else None))
+          int(foil), rarity, artist, image_url, _now() if scryfall_id else None,
+          condition, language, (notes or "").strip()))
     return cursor.lastrowid
 
 
@@ -163,20 +184,19 @@ def add_cards(cards):
 
 def update_card(card_id, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
                 collector_number=None, foil=False, rarity=None, artist=None, image_url=None,
-                market_price=None):
-    # Rewrites an entry (e.g. after changing its printing). If that makes it the same
-    # printing + finish as another entry, the two are merged. Returns the surviving id.
+                market_price=None, condition="NM", language="en", notes=""):
+    # Rewrites an entry (e.g. after changing its printing or condition). If that makes it
+    # the same printing, finish, condition and language as another entry, the two are
+    # merged, notes included. Returns the surviving id.
     with _connect() as conn:
         _record_price(conn, scryfall_id, foil, market_price)
         if scryfall_id:
-            other = conn.execute(
-                "SELECT id FROM collection WHERE scryfall_id = ? AND foil = ? AND id != ?",
-                (scryfall_id, int(foil), card_id),
-            ).fetchone()
+            other = _same_copies(conn, scryfall_id, foil, condition, language, exclude_id=card_id)
             if other:
                 conn.execute(
-                    "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ? WHERE id = ?",
-                    (quantity, price, _now(), other["id"]),
+                    "UPDATE collection SET quantity = quantity + ?, price = ?, price_updated = ?, notes = ? "
+                    "WHERE id = ?",
+                    (quantity, price, _now(), merge_notes(other["notes"], notes), other["id"]),
                 )
                 conn.execute("DELETE FROM collection WHERE id = ?", (card_id,))
                 return other["id"]
@@ -184,10 +204,11 @@ def update_card(card_id, name, set_name, price, quantity, *, scryfall_id=None, s
         conn.execute("""
             UPDATE collection SET name = ?, set_name = ?, price = ?, quantity = ?, scryfall_id = ?,
                 set_code = ?, collector_number = ?, foil = ?, rarity = ?, artist = ?, image_url = ?,
-                price_updated = ?
+                price_updated = ?, condition = ?, language = ?, notes = ?
             WHERE id = ?
         """, (name, set_name, price, quantity, scryfall_id, set_code, collector_number, int(foil),
-              rarity, artist, image_url, _now() if scryfall_id else None, card_id))
+              rarity, artist, image_url, _now() if scryfall_id else None, condition, language,
+              (notes or "").strip(), card_id))
         return card_id
 
 

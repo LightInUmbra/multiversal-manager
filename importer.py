@@ -16,6 +16,7 @@ import re
 import unicodedata
 from dataclasses import dataclass, field
 
+import copy_details
 import scryfall
 
 # Header aliases (lowercased, underscores as spaces) -> field
@@ -28,6 +29,9 @@ _HEADER_ALIASES = {
     "collector_number": {"collector number", "card number", "number", "cn", "collector no", "collector #"},
     "foil": {"foil", "finish", "printing"},
     "scryfall_id": {"scryfall id", "scryfallid", "scryfall uuid"},
+    "condition": {"condition", "cond", "grade"},
+    "language": {"language", "lang"},
+    "notes": {"notes", "note", "comment", "comments"},
 }
 _FOIL_VALUES = {"foil", "etched", "true", "yes", "y", "1"}
 
@@ -48,6 +52,13 @@ class ImportRow:
     collector_number: str = ""
     foil: bool = False
     scryfall_id: str = ""
+    condition: str = copy_details.DEFAULT_CONDITION
+    language: str = copy_details.DEFAULT_LANGUAGE
+    notes: str = ""
+
+    def details(self):
+        # Condition, language and notes as add_card keywords
+        return {"condition": self.condition, "language": self.language, "notes": self.notes}
 
     def describe(self):
         text = f"Line {self.line}: {self.quantity} {self.name or self.scryfall_id}"
@@ -143,6 +154,9 @@ def parse_csv(text):
             collector_number=get("collector_number"),
             foil=get("foil").lower() in _FOIL_VALUES,
             scryfall_id=get("scryfall_id").lower(),
+            condition=copy_details.parse_condition(get("condition")),
+            language=copy_details.parse_language(get("language")),
+            notes=get("notes"),
         )
         if not row.name and not row.scryfall_id:
             errors.append(f"Line {line_number}: no card name")
@@ -292,5 +306,5 @@ def resolve(rows, lookup=None, set_codes=None, fuzzy=None):
 
 def card_records(result):
     # add_card keyword dicts for every matched row
-    return [scryfall.card_record(card, foil=row.foil, quantity=row.quantity)
+    return [{**scryfall.card_record(card, foil=row.foil, quantity=row.quantity), **row.details()}
             for row, card in result.matched]

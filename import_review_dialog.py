@@ -42,7 +42,8 @@ class ReviewEntry:
     include: bool = True
 
     def record(self):
-        return scryfall.card_record(self.card, foil=self.foil, quantity=self.quantity, price=self.price)
+        return {**scryfall.card_record(self.card, foil=self.foil, quantity=self.quantity, price=self.price),
+                **self.row.details()}
 
 
 def build_entries(result):

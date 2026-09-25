@@ -2,10 +2,11 @@
 from PySide6.QtCore import Qt, QStringListModel, QTimer
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QFormLayout, QLineEdit, QPushButton,
-    QSpinBox, QDialogButtonBox, QCompleter,
+    QSpinBox, QDialogButtonBox, QCompleter, QComboBox, QPlainTextEdit,
 )
 
 import background
+import copy_details
 import scryfall
 from printing_picker import PrintingPicker
 
@@ -64,6 +65,23 @@ class CardDialog(QDialog):
         form_layout.addRow(self.picker)
         form_layout.addRow("Quantity:", self.quantity_input)
 
+        # Condition, language and notes describe these copies; a different condition
+        # or language of the same printing is kept as its own entry
+        self.condition_combo = QComboBox()
+        for code, label in copy_details.CONDITIONS.items():
+            self.condition_combo.addItem(f"{label} ({code})", code)
+        self.language_combo = QComboBox()
+        for code, label in copy_details.LANGUAGES.items():
+            self.language_combo.addItem(label, code)
+        self.language_combo.setToolTip("Prices are for the English printing")
+        self.notes_input = QPlainTextEdit()
+        self.notes_input.setPlaceholderText("Optional, e.g. signed, altered art, in the red binder…")
+        self.notes_input.setFixedHeight(64)
+        self.notes_input.setTabChangesFocus(True)
+        form_layout.addRow("Condition:", self.condition_combo)
+        form_layout.addRow("Language:", self.language_combo)
+        form_layout.addRow("Notes:", self.notes_input)
+
         self.button_box = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -89,6 +107,9 @@ class CardDialog(QDialog):
         if existing is not None:
             self.name_input.setText(existing["name"])
             self.quantity_input.setValue(existing["quantity"])
+            self.condition_combo.setCurrentIndex(self.condition_combo.findData(existing["condition"]))
+            self.language_combo.setCurrentIndex(self.language_combo.findData(existing["language"]))
+            self.notes_input.setPlainText(existing["notes"])
             # Reselect the entry's current printing, finish and price once printings load
             self._look_up(existing["name"], select_id=existing["scryfall_id"],
                           foil=bool(existing["foil"]), price=existing["price"])
@@ -132,4 +153,9 @@ class CardDialog(QDialog):
 
     def card_data(self):
         # Keyword arguments for database.add_card / update_card
-        return self.picker.record(self.quantity_input.value())
+        return {
+            **self.picker.record(self.quantity_input.value()),
+            "condition": self.condition_combo.currentData(),
+            "language": self.language_combo.currentData(),
+            "notes": self.notes_input.toPlainText(),
+        }
