@@ -1,7 +1,9 @@
 # Imports
 import csv
+import sqlite3
 import sys
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 from PySide6.QtCore import Qt, QItemSelectionModel, QSettings, QTimer, QUrl
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
@@ -13,6 +15,7 @@ from PySide6.QtWidgets import (
 )
 
 import background
+import backup
 import copy_details
 import database as db
 import finance
@@ -251,6 +254,10 @@ class MainWindow(QMainWindow):
         if stale:
             self.refresh_prices(stale, quiet=True)
 
+        # Once a day, quietly, in the background
+        background.run(backup.daily_backup, self._keep_tracked_history(),
+                       on_success=lambda _: None, on_error=self._on_backup_failed)
+
     def _build_menu(self):
         file_menu = self.menuBar().addMenu("&File")
         add_action = QAction("&Add Card…", self, shortcut=QKeySequence.StandardKey.New)
@@ -264,6 +271,10 @@ class MainWindow(QMainWindow):
         file_menu.addAction(add_action)
         file_menu.addAction(import_action)
         file_menu.addAction(export_action)
+        file_menu.addSeparator()
+        file_menu.addAction("&Back Up Now", self.back_up_now)
+        file_menu.addAction("&Restore from Backup…", self.restore_backup)
+        file_menu.addAction("Open Backups &Folder", self.open_backups_folder)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
 
@@ -660,6 +671,58 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Export Failed", str(error))
             return
         self.statusBar().showMessage(f"Exported collection to {path}", 8000)
+
+    # Backups
+
+    def _keep_tracked_history(self):
+        # A hand-picked Finance list is small enough to back up with its full price history
+        return self.settings.value("finance_mode") == finance.BAREBONES
+
+    def _on_backup_failed(self, message):
+        self.statusBar().showMessage(f"Automatic backup failed: {message}", 15000)
+
+    def back_up_now(self):
+        self.statusBar().showMessage("Backing up…")
+        background.run(backup.make_backup, None, self._keep_tracked_history(),
+                       on_success=lambda path: self.statusBar().showMessage(f"Backed up to {path.name}.", 8000),
+                       on_error=lambda message: QMessageBox.warning(self, "Back Up", f"Backup failed:\n{message}"))
+
+    def open_backups_folder(self):
+        backup.backup_dir().mkdir(exist_ok=True)
+        QDesktopServices.openUrl(QUrl.fromLocalFile(str(backup.backup_dir())))
+
+    def restore_backup(self):
+        if self._refreshing:
+            QMessageBox.information(self, "Restore", "Prices are refreshing. Try again in a moment.")
+            return
+        path, _ = QFileDialog.getOpenFileName(self, "Restore from Backup", str(backup.backup_dir()),
+                                              "Backups (*.db)")
+        if not path:
+            return
+        answer = QMessageBox.question(
+            self, "Restore", f"Replace your collection with the backup {Path(path).name}?\n\n"
+            "Your current collection is backed up first, so you can go back to it the same way.")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            safety = backup.make_backup(datetime.now().strftime("%Y-%m-%d_%H%M%S") + "_before-restore",
+                                        self._keep_tracked_history())
+            backup.restore(path)
+        except (ValueError, OSError, sqlite3.Error) as error:
+            QMessageBox.warning(self, "Restore", f"Couldn't restore that backup:\n{error}")
+            return
+
+        # Backups leave out downloadable market data, so Finance fetches it again
+        for key in ("finance_bulk_updated", "finance_backfilled"):
+            self.settings.remove(key)
+        if getattr(self, "_finance", None) is not None:
+            self._finance.close()
+            self._finance.deleteLater()
+            self._finance = None
+        self.populate_table()
+        self.show_selected_card()
+        self.statusBar().showMessage(
+            f"Restored {Path(path).name}. Your previous collection was saved as {safety.name}.", 15000)
 
     def show_about(self):
         QMessageBox.about(self, f"About {APP_NAME}", (

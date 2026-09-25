@@ -19,6 +19,7 @@ The desktop app comes first. Web and mobile versions are planned, and all three 
 - **Trends** (Ctrl+T). Your collection's value over time, plus its biggest gainers and losers.
 - **Import anything.** CSV exports from Moxfield, ManaBox, Deckbox and most other tools (columns are matched by header name), or plain text lists like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. Every entry goes through a review step before it's saved, and entries whose printing isn't certain are listed first, with a card preview to help you choose.
 - **Export** your collection to CSV at any time.
+- **Automatic backups.** Your collection is backed up once a day when the app starts, and the last 10 backups are kept. *File → Back Up Now* makes one on demand, and *File → Restore from Backup…* rolls back to any of them, saving your current collection first so a restore can be undone too. Backups are small (a few MB to tens of MB) because they leave out market price history that can be downloaded again.
 - **Quick edits.** Right-click or double-click a card to change its printing, finish, quantity or price. Adding a printing you already own increases its quantity instead of creating a duplicate.
 
 ### Finance
@@ -48,7 +49,6 @@ The goal is for the desktop, web and mobile versions to stay in sync, so a card 
 
 ### Coming next on desktop
 
-- Automatic database backups
 - Decks, binders and wishlists
 - Offline card search
 - Card image grid view
@@ -77,7 +77,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Your data stays on your machine. The collection and price history live in `collection.db` next to `main.py`, and card images are cached in `image_cache/`. Both are git-ignored.
+Your data stays on your machine. The collection and price history live in `collection.db` next to `main.py`, backups go in `backups/`, and card images are cached in `image_cache/`. All three are git-ignored.
 
 ### Tests
 
@@ -95,6 +95,7 @@ multiversal-manager/
     finance.py               # Finance window: market tracking, spikes and drops, daily updates
     trends.py                # Price change math and the Trends window
     database.py              # SQLite storage, price history and schema upgrades
+    backup.py                # Daily backups, Back Up Now and Restore
     importer.py              # CSV / text list parsing and printing matching
     copy_details.py          # Conditions and languages, and reading them from other tools
     import_review_dialog.py  # Review step for imports
