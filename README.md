@@ -27,7 +27,7 @@ Right now it's a desktop app. Web and mobile versions are on the way, and the pl
 Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pauper, Commander, Oathbreaker, Brawl and every other format Scryfall tracks, and you can make binders and wishlists there too.
 
 - **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section, and a grid of card images to build from, each showing how many copies you own.
-- **Build from what you have, or explore all of what MTG has to offer --.** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
+- **Build from what you have, or explore all of what MTG has to offer --** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
 - **Pick your printing --** Choosing a different printing opens a window with every version of the card: its image, set, rarity, and the price of each finish, plus how many you own.
 - **Legality checks as you go --** Deck and sideboard size, copy limits (with exceptions for basic lands and "any number" cards), banned and restricted cards, and commander eligibility and color identity are all checked while you build.
 - **Know what's missing --** Cards you don't own are marked, and every list shows what it's worth and what the missing cards would cost you.
