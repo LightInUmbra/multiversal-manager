@@ -1,81 +1,120 @@
 # Multiversal Manager
 
-A desktop app for tracking a Magic: The Gathering card collection: what you own, which printings, and what it's worth. Built with PySide6 and SQLite, with live card data and images from [Scryfall](https://scryfall.com).
+**Your Magic: The Gathering collection, its value, and the whole card market, in one place.**
 
-## Features
+Multiversal Manager is an independent, original collection manager and market tracker for Magic: The Gathering, created by Umbra Ortiz ([LightInUmbra](https://github.com/LightInUmbra)). It records exactly which printings and finishes you own, what they're worth today, and how their prices have moved. A separate Finance view follows prices across every paper printing ever made.
 
-- **Scryfall-powered Add Card**: start typing a name and suggestions appear as you type. Pick the exact printing you own (every paper printing is listed) and the set, finish and current price fill in automatically.
-- **Card images**: see a full card preview while adding and when selecting a card in your collection. Images are cached locally after the first load.
-- **Collection value**: a running total of your collection's value, plus total and unique card counts.
-- **Price history and trends**: every Scryfall price is recorded once a day per printing and finish. A *Change* column shows how each card has moved over 24 hours, 7, 30 or 90 days, or all time, and the summary shows the whole collection's movement. Selecting a card charts its price history. *Trends…* (Ctrl+T) charts the collection's value over time and lists the biggest gainers and losers. Changes count price movement only, so adding or removing cards doesn't show up as a gain or loss.
-- **Finance** (Ctrl+Shift+F): a market view in the style of MTGStocks, showing the biggest price spikes and drops over 24 hours to all time for every printing and finish (non-foil, foil, etched), with a minimum-price filter and a price chart for each. The first open downloads every paper printing from Scryfall's bulk data (~80 MB) and 90 days of price history from MTGJSON (~60 MB, re-checked weekly). *Track Every Card* starts with all of them tracked (and tracks new printings as they come out). *Start Empty* starts with none. Either way, *Track Cards…* adds cards: filter by card, set name or set code, then track single printings or everything shown. *Remove Selected*, the Delete key or right-click stops tracking a printing or a whole set, and right-click can also add other printings or finishes of a card. Prices update once a day, as often as Scryfall publishes them, and history keeps building from there. Expect the database to grow to a few hundred MB.
-- **Price refresh**: prices older than 24 hours update automatically on startup, or on demand with *Refresh Prices*. Foil and non-foil copies are priced separately.
-- **Editing**: right-click or double-click a card (or use *Edit…*) to change its printing, finish, quantity or price. Double-click a quantity to change just that. Adding a printing you already own increases its quantity instead of creating a duplicate row.
-- **Filter and sort**: filter by name, set or artist, and sort by any column.
-- **Import**: bring in an existing collection or deck list (File → Import…). Works with CSV exports from Moxfield, ManaBox, Deckbox, this app, and most other tools (columns are recognized by header name), as well as plain-text lists like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. Cards are matched to printings on Scryfall, then shown in a review window before anything is saved. Entries whose printing isn't certain (the file only gave a name, or named a printing Scryfall doesn't have) are listed first, so you can pick the printing you own with a card-image preview.
-- **Export**: save your collection to CSV (File → Export to CSV…).
-- **View on Scryfall**: open the selected printing's Scryfall page.
+The desktop app comes first. Web and mobile versions are planned, and all three are meant to share a single collection (see [The Multiverse](#the-multiverse) below).
 
-## Setup
+---
 
-This repo includes [Magic-Projects](https://github.com/LightInUmbra/Magic-Projects) as a git submodule, which supplies the `ScryFunctions` Scryfall wrapper. Clone with submodules:
+## What it does
+
+### Your collection
+
+- **Printing-exact entries.** Type a card name and suggestions appear as you go. Pick the exact printing and finish you own, and the set, collector number, rarity, artist and price fill in on their own.
+- **Live value.** A running total of what your collection is worth, with card counts and each card's price movement over the last 24 hours, 7, 30 or 90 days, or all time.
+- **Price history per card.** Select any card to chart its price over time. Movement counts market changes only; adding or removing cards never shows up as a gain or loss.
+- **Trends** (Ctrl+T). Your collection's value over time, plus its biggest gainers and losers.
+- **Import anything.** CSV exports from Moxfield, ManaBox, Deckbox and most other tools (columns are matched by header name), or plain text lists like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. Every entry goes through a review step before it's saved, and entries whose printing isn't certain are listed first, with a card preview to help you choose.
+- **Export** your collection to CSV at any time.
+- **Quick edits.** Right-click or double-click a card to change its printing, finish, quantity or price. Adding a printing you already own increases its quantity instead of creating a duplicate.
+
+### Finance
+
+A market view of Magic prices (Ctrl+Shift+F).
+
+- **Spikes and drops.** The biggest movers over any period, for each printing and finish (non-foil, foil, etched), with a minimum-price filter to cut out penny-card noise.
+- **Two ways to start.** *Track Every Card* follows all ~160,000 paper printings and finishes, and picks up new ones as they're released. *Start Empty* follows nothing until you choose. Both load the full card database, so switching later is instant.
+- **Curate freely.** Add single printings, every printing of a card, or whole sets with *Track Cards…*. Remove a printing or an entire set with Delete or a right-click. Price history is kept either way.
+- **History from day one.** The first launch downloads 90 days of price history for every card, so trends appear immediately. From then on the app records every daily price, and the history keeps growing.
+
+> The first time Finance opens, it downloads about 140 MB (card data plus 90 days of price history) and the database grows to a few hundred MB. Prices update once a day, as often as the data sources publish them.
+
+---
+
+## The Multiverse
+
+Multiversal Manager is planned as a set of connected apps built around one collection:
+
+| Platform | Status |
+|---|---|
+| **Desktop** | In active development: this repository |
+| **Web** | Planned |
+| **Mobile** | Planned |
+
+The goal is for the desktop, web and mobile versions to stay in sync, so a card added on your phone at a store shows up on your desktop at home. The desktop app keeps everything in a local SQLite database today, with the card and price logic kept separate from the interface so it can later be shared with a sync service.
+
+### Coming next on desktop
+
+- Condition, language and notes for each copy
+- Automatic database backups
+- Decks, binders and wishlists
+- Offline card search
+- Card image grid view
+- A standalone Windows installer
+
+---
+
+## Getting started
+
+Multiversal Manager uses [Magic-Projects](https://github.com/LightInUmbra/Magic-Projects), a companion Scryfall toolkit by the same author, as a git submodule. Clone with submodules:
 
 ```
 git clone --recurse-submodules https://github.com/LightInUmbra/multiversal-manager.git
 cd multiversal-manager
 ```
 
-(If you've already cloned without submodules, run `git submodule update --init`.)
+(Already cloned without them? Run `git submodule update --init`.)
 
-Then create a virtual environment and install dependencies:
+Create a virtual environment, install dependencies and launch:
 
 ```
 python -m venv .venv
 .venv\Scripts\activate          # Windows
-source .venv/bin/activate       # Mac/Linux
+source .venv/bin/activate       # macOS / Linux
 pip install -r requirements.txt
 python main.py
 ```
 
-Your collection is saved to `collection.db` next to `main.py`. Downloaded card images are cached in `image_cache/`. Both are git-ignored.
+Your data stays on your machine. The collection and price history live in `collection.db` next to `main.py`, and card images are cached in `image_cache/`. Both are git-ignored.
 
-### Running tests
+### Tests
 
 ```
 python -m pytest
 ```
 
-## Project Structure
+---
+
+## Under the hood
 
 ```
 multiversal-manager/
-    main.py               # Main window: collection table, details panel, totals
-    add_card_dialog.py    # Add / Edit Card dialog with Scryfall autocomplete
-    printing_picker.py    # Printing, finish and price picker with card preview
-    import_review_dialog.py  # Review imported entries and choose printings
-    card_image.py         # Card image widget (async loading, never crops the card)
-    charts.py             # Price / value history line charts (QtCharts)
-    finance.py            # Finance window: spikes and drops, tracking, daily price updates
-    mtgjson.py            # 90-day price history backfill from MTGJSON
-    trends.py             # Price change calculations and the Trends window
-    importer.py           # Parses CSV / text card lists and matches them on Scryfall
-    scryfall.py           # Adapter over ScryFunctions + autocomplete, prices, images
-    background.py         # Runs network calls off the GUI thread
-    database.py           # SQLite storage and schema migrations
+    main.py                  # Main window: collection table, card details, totals
+    finance.py               # Finance window: market tracking, spikes and drops, daily updates
+    trends.py                # Price change math and the Trends window
+    database.py              # SQLite storage, price history and schema upgrades
+    importer.py              # CSV / text list parsing and printing matching
+    import_review_dialog.py  # Review step for imports
+    add_card_dialog.py       # Add / Edit Card with live name suggestions
+    printing_picker.py       # Printing, finish and price picker with card preview
+    card_image.py            # Card images, loaded in the background and never cropped
+    charts.py                # Price and value history charts
+    scryfall.py              # Card data, prices, images and bulk downloads
+    mtgjson.py               # 90-day price history backfill
+    background.py            # Keeps network work off the interface thread
     external/
-        Magic-Projects/   # Submodule: ScryFunctions.py and the Card class
+        Magic-Projects/      # Submodule: the ScryFunctions toolkit and Card class
     tests/
 ```
 
-## Built With
+**Built with** Python 3, PySide6 (Qt for Python), QtCharts and SQLite.
 
-- Python 3
-- PySide6 (Qt for Python)
-- SQLite
-- Scryfall API via `requests`
+---
 
-## Credits & Legal
+## Credits and legal
 
-Card data, prices and images are provided by [Scryfall](https://scryfall.com). Card images are always shown whole, so the artist credit and copyright line stay visible. They are scaled, never cropped. Prices are Scryfall's daily estimates and are not guaranteed to be accurate.
+Card data, images and daily prices come from [Scryfall](https://scryfall.com). Historical prices come from [MTGJSON](https://mtgjson.com). Thank you to both projects for making this data openly available. Card images are always shown whole, so the artist credit and copyright line stay visible. Prices are market estimates and aren't guaranteed to be accurate.
 
 Multiversal Manager is unofficial Fan Content permitted under the [Fan Content Policy](https://company.wizards.com/en/legal/fancontentpolicy). Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.
