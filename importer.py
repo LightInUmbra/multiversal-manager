@@ -34,7 +34,8 @@ _HEADER_ALIASES = {
     "notes": {"notes", "note", "comment", "comments"},
     "section": {"board", "section", "category", "zone"},
 }
-_FOIL_VALUES = {"foil", "etched", "true", "yes", "y", "1"}
+# Finish column values -> finish code (0 non-foil, 1 foil, 2 etched); anything else is non-foil
+_FINISH_VALUES = {"foil": 1, "true": 1, "yes": 1, "y": 1, "1": 1, "etched": 2, "foil etched": 2, "2": 2}
 
 # Deck sections, and the headers / board names other tools use for them. Cards under
 # "About" (Arena's deck name line) aren't cards at all.
@@ -47,7 +48,8 @@ _SECTION_NAMES = {
     "about": None,
 }
 _TEXT_SIDEBOARD_PREFIX = re.compile(r"^SB:\s*", re.IGNORECASE)
-_TEXT_FOIL_MARKERS = re.compile(r"\s*(\*F\*|\*E\*|\(foil\)|\[foil\])\s*$", re.IGNORECASE)
+_TEXT_FOIL_MARKERS = re.compile(r"\s*(\*F\*|\*E\*|\(foil\)|\[foil\]|\(etched\)|\[etched\])\s*$",
+                                re.IGNORECASE)
 _TEXT_QUANTITY = re.compile(r"^(\d+)\s*x?\s+(.+)$", re.IGNORECASE)
 _TEXT_SET = re.compile(r"^(?P<name>.+?)\s+[\(\[](?P<set>[A-Za-z0-9]{2,6})[\)\]](?:\s+(?P<cn>\S+))?$")
 
@@ -60,7 +62,7 @@ class ImportRow:
     set_code: str = ""
     set_name: str = ""
     collector_number: str = ""
-    foil: bool = False
+    foil: int = 0  # finish code: 0 non-foil, 1 foil, 2 etched
     scryfall_id: str = ""
     condition: str = copy_details.DEFAULT_CONDITION
     language: str = copy_details.DEFAULT_LANGUAGE
@@ -163,7 +165,7 @@ def parse_csv(text):
             set_code=set_code.lower(),
             set_name=set_name,
             collector_number=get("collector_number"),
-            foil=get("foil").lower() in _FOIL_VALUES,
+            foil=_FINISH_VALUES.get(get("foil").lower(), 0),
             scryfall_id=get("scryfall_id").lower(),
             condition=copy_details.parse_condition(get("condition")),
             language=copy_details.parse_language(get("language")),
@@ -195,10 +197,10 @@ def parse_text(text):
         if _TEXT_SIDEBOARD_PREFIX.match(line):  # older .dec files: "SB: 2 Duress"
             line, row_section = _TEXT_SIDEBOARD_PREFIX.sub("", line), "Sideboard"
 
-        foil = False
+        foil = 0
         marker = _TEXT_FOIL_MARKERS.search(line)
         if marker:
-            foil = True
+            foil = 2 if "e" in marker.group(1).lower() else 1  # *E* / (etched)
             line = line[:marker.start()].strip()
 
         quantity = 1

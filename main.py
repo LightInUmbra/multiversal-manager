@@ -314,7 +314,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_index, NAME_COL, name_item)
             self.table.setItem(row_index, SET_COL, _item(set_label))
             self.table.setItem(row_index, NUMBER_COL, _item(int(number) if number.isdigit() else number))
-            self.table.setItem(row_index, FINISH_COL, _item("Foil" if row["foil"] else ""))
+            self.table.setItem(row_index, FINISH_COL, _item(scryfall.finish_label(row["foil"])))
             condition_item = _item(row["condition"])
             condition_item.setToolTip(copy_details.CONDITIONS.get(row["condition"], row["condition"]))
             self.table.setItem(row_index, CONDITION_COL, condition_item)
@@ -460,7 +460,7 @@ class MainWindow(QMainWindow):
             return
 
         self.card_image.set_image_url(row["image_url"])
-        self.detail_name.setText(row["name"] + ("  ✦ Foil" if row["foil"] else ""))
+        self.detail_name.setText(row["name"] + (f"  ✦ {scryfall.finish_label(row['foil'])}" if row["foil"] else ""))
         fields = self.detail_fields
         set_text = row["set_name"]
         if row["set_code"]:
@@ -588,7 +588,7 @@ class MainWindow(QMainWindow):
         self._quiet_refresh = quiet
         self.refresh_button.setEnabled(False)
         self.statusBar().showMessage(f"Refreshing prices for {_count(len(rows), 'entry')}…")
-        work = [(r["id"], r["scryfall_id"], bool(r["foil"])) for r in rows]
+        work = [(r["id"], r["scryfall_id"], r["foil"]) for r in rows]
         background.run(scryfall.fetch_prices, work, on_success=self._on_prices, on_error=self._on_prices_failed)
 
     def _on_prices(self, result):

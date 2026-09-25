@@ -112,7 +112,7 @@ class CardDialog(QDialog):
             self.notes_input.setPlainText(existing["notes"])
             # Reselect the entry's current printing, finish and price once printings load
             self._look_up(existing["name"], select_id=existing["scryfall_id"],
-                          foil=bool(existing["foil"]), price=existing["price"])
+                          foil=existing["foil"], price=existing["price"])
 
     # Autocomplete
 

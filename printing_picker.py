@@ -1,7 +1,7 @@
 # Imports
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget, QFormLayout, QComboBox, QCheckBox, QDoubleSpinBox, QLabel,
+    QWidget, QFormLayout, QComboBox, QDoubleSpinBox, QLabel,
 )
 
 import background
@@ -39,8 +39,9 @@ class PrintingPicker(QWidget):
         self.printing_combo.setMinimumContentsLength(32)
         self.printing_combo.currentIndexChanged.connect(self._on_printing_changed)
 
-        self.foil_check = QCheckBox("Foil")
-        self.foil_check.toggled.connect(self._on_foil_toggled)
+        # The finishes the selected printing exists in (non-foil, foil, etched)
+        self.finish_combo = QComboBox()
+        self.finish_combo.currentIndexChanged.connect(self._on_finish_changed)
 
         self.price_input = QDoubleSpinBox()
         self.price_input.setPrefix("$")
@@ -58,7 +59,7 @@ class PrintingPicker(QWidget):
         layout = QFormLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addRow("Printing:", self.printing_combo)
-        layout.addRow("Finish:", self.foil_check)
+        layout.addRow("Finish:", self.finish_combo)
         layout.addRow("Price (each):", self.price_input)
         layout.addRow(self.status_label)
 
@@ -77,8 +78,8 @@ class PrintingPicker(QWidget):
         # previous choice once the printings arrive.
         name = name.strip()
         self._lookup_name = name
+        self._set_printings([])  # before storing the choice: clearing uses up any pending one
         self._pending = (select_id, foil, price)
-        self._set_printings([])
         self.status_label.setText(f"Searching Scryfall for “{name}”…")
         background.run(_printings, name, on_success=self._on_printings, on_error=self._on_failed)
 
@@ -114,12 +115,13 @@ class PrintingPicker(QWidget):
             ids = [card.id for card in printings]
             self.printing_combo.setCurrentIndex(ids.index(select_id) if select_id in ids else 0)
             self._on_printing_changed()
-            if foil is not None and self.foil_check.isEnabled():
-                self.foil_check.setChecked(foil)
+            if foil is not None and self.finish_combo.findData(int(foil)) >= 0:
+                self.finish_combo.setCurrentIndex(self.finish_combo.findData(int(foil)))
             if price is not None:
                 self.price_input.setValue(price)
         else:
-            self.foil_check.setEnabled(False)
+            self.finish_combo.clear()
+            self.finish_combo.setEnabled(False)
             self.price_input.setValue(0)
         self._applying = False
 
@@ -129,17 +131,22 @@ class PrintingPicker(QWidget):
         card = self.selected_printing()
         if card is None:
             return
-        finishes = set(card.finishes)
-        # Only let the user choose when this printing exists in both finishes
+        # Offer only the finishes this printing exists in, keeping the current one if it does
         applying, self._applying = self._applying, True
-        self.foil_check.setChecked("nonfoil" not in finishes and "foil" in finishes)
-        self.foil_check.setEnabled({"foil", "nonfoil"} <= finishes)
+        current = self.finish()
+        self.finish_combo.clear()
+        for code in scryfall.finish_codes(card) or [0]:
+            self.finish_combo.addItem(scryfall.FINISHES[code][1], code)
+        self.finish_combo.setCurrentIndex(max(0, self.finish_combo.findData(current)))
+        self.finish_combo.setEnabled(self.finish_combo.count() > 1)
         self._update_price()
         self._applying = applying
         self.image.set_image_url(scryfall.image_url_for(card))
         self._emit_changed()
 
-    def _on_foil_toggled(self):
+    def _on_finish_changed(self, *_):
+        if self._applying:
+            return
         applying, self._applying = self._applying, True
         self._update_price()
         self._applying = applying
@@ -148,7 +155,7 @@ class PrintingPicker(QWidget):
     def _update_price(self):
         card = self.selected_printing()
         if card is not None:
-            self.price_input.setValue(scryfall.price_for(card, self.foil_check.isChecked()))
+            self.price_input.setValue(scryfall.price_for(card, self.finish()))
 
     def _emit_changed(self, *_):
         if not self._applying:
@@ -160,13 +167,15 @@ class PrintingPicker(QWidget):
         index = self.printing_combo.currentIndex()
         return self._printings[index] if 0 <= index < len(self._printings) else None
 
-    def is_foil(self):
-        return self.foil_check.isChecked()
+    def finish(self):
+        # Finish code: 0 non-foil, 1 foil, 2 etched
+        code = self.finish_combo.currentData()
+        return code if code is not None else 0
 
     def price(self):
         return self.price_input.value()
 
     def record(self, quantity):
         # Keyword arguments for database.add_card
-        return scryfall.card_record(self.selected_printing(), foil=self.is_foil(),
+        return scryfall.card_record(self.selected_printing(), foil=self.finish(),
                                     quantity=quantity, price=self.price())

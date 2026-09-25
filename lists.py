@@ -14,12 +14,12 @@ Any printing you own counts toward a list's cards.
 from datetime import date, datetime, timedelta, timezone
 
 from PySide6.QtCore import Qt, QTimer
-from PySide6.QtGui import QAction, QColor, QCursor, QKeySequence
+from PySide6.QtGui import QAction, QActionGroup, QColor, QCursor, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox, QTreeWidget,
-    QTreeWidgetItem, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QPushButton,
-    QSplitter, QMessageBox, QDialog, QDialogButtonBox, QInputDialog, QMenu, QFileDialog, QTabBar,
-    QCheckBox, QTextBrowser, QProgressBar, QToolButton,
+    QTreeWidgetItem, QHeaderView, QAbstractItemView, QPushButton, QSplitter, QMessageBox, QDialog,
+    QDialogButtonBox, QInputDialog, QMenu, QFileDialog, QTabBar, QCheckBox, QTextBrowser, QProgressBar,
+    QToolButton, QMenuBar,
 )
 
 import background
@@ -27,6 +27,7 @@ import database as db
 import finance
 import formats
 import scryfall
+from card_browser import CardBrowser, PrintingDialog
 from card_image import CardImage
 from import_review_dialog import count, start_import
 from importer import SECTIONS
@@ -37,7 +38,6 @@ SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "M
 
 DECK_COLUMNS = ["Qty", "Card", "Type", "Mana", "Price", "Owned", "Legal"]
 QTY_COL, NAME_COL, TYPE_COL, MANA_COL, PRICE_COL, OWNED_COL, LEGAL_COL = range(len(DECK_COLUMNS))
-CARD_COLUMNS = ["Card", "Type", "Mana", "Set", "Price", "Owned"]
 
 ID_ROLE = Qt.ItemDataRole.UserRole
 GOOD = QColor("#1a8f3c")
@@ -45,7 +45,7 @@ BAD = QColor("#c62828")
 MUTED = QColor("gray")
 PRICE_MAX_AGE = timedelta(hours=24)
 CARD_DB_MAX_AGE = timedelta(days=7)  # the deck builder re-checks Scryfall's bulk data weekly
-RESULTS_SHOWN = 300
+RESULTS_SHOWN = 600
 
 
 # Pure helpers
@@ -78,7 +78,7 @@ def deck_text(entries):
     for section in SECTIONS:
         lines = [f"{e['quantity']} {e['name']}"
                  + (f" ({e['set_code']}) {e['collector_number']}" if e["set_code"] else "")
-                 + (" *F*" if e["foil"] else "")
+                 + {0: "", 1: " *F*", 2: " *E*"}[e["foil"]]
                  for e in entries if (e["section"] or "Main") == section]
         if lines:
             blocks.append("\n".join(["Deck" if section == "Main" else section] + lines))
@@ -166,7 +166,10 @@ class ListsWindow(QWidget):
         splitter.addWidget(self._build_card_panel())
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([300, 640, 560])
-        QVBoxLayout(self).addWidget(splitter)
+        layout = QVBoxLayout(self)
+        layout.setMenuBar(self._build_menu())
+        layout.addWidget(splitter)
+        self.set_lightweight(self.settings.value("deckbuilder_lightweight", False, type=bool))
 
         self.reload()
         self.search_cards()
@@ -175,6 +178,26 @@ class ListsWindow(QWidget):
             self.update_card_database(quiet=True)
 
     # Layout
+
+    def _build_menu(self):
+        menu_bar = QMenuBar()
+        view = menu_bar.addMenu("&View")
+        modes = QActionGroup(self)
+        self.standard_action = QAction("&Standard (card images)", self, checkable=True)
+        self.lightweight_action = QAction("&Lightweight (text only)", self, checkable=True)
+        self.lightweight_action.setStatusTip("The card list is a plain table and downloads no images")
+        for action, on in ((self.standard_action, False), (self.lightweight_action, True)):
+            modes.addAction(action)
+            view.addAction(action)
+            action.triggered.connect(lambda _, on=on: self.set_lightweight(on))
+        return menu_bar
+
+    def set_lightweight(self, on):
+        # Lightweight mode shows the card list (and printing picker) as plain tables,
+        # which download no card images: easier on slower computers and connections
+        self.settings.setValue("deckbuilder_lightweight", on)
+        (self.lightweight_action if on else self.standard_action).setChecked(True)
+        self.card_browser.set_lightweight(on)
 
     def _build_detail_panel(self):
         self.card_image = CardImage(width=240)
@@ -309,6 +332,11 @@ class ListsWindow(QWidget):
             self.color_buttons[color] = button
             filters.addWidget(button)
         filters.addStretch()
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems(list(db.CARD_SORTS))
+        self.sort_combo.setToolTip("Sort the card list")
+        self.sort_combo.currentIndexChanged.connect(lambda _: self.search_cards())
+        filters.addWidget(self.sort_combo)
         self.legal_check = QCheckBox("Legal for this deck")
         self.legal_check.setToolTip("Only cards legal in the deck's format (and its commander's colors)")
         self.legal_check.setChecked(True)
@@ -322,20 +350,24 @@ class ListsWindow(QWidget):
         self.db_progress = QProgressBar()
         self.db_progress.hide()
 
-        self.card_table = QTableWidget(0, len(CARD_COLUMNS))
-        self.card_table.setHorizontalHeaderLabels(CARD_COLUMNS)
-        self.card_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.card_table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.card_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.card_table.setAlternatingRowColors(True)
-        self.card_table.verticalHeader().setVisible(False)
-        header = self.card_table.horizontalHeader()
-        header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        self.card_table.itemSelectionChanged.connect(self.on_card_selection)
-        self.card_table.cellDoubleClicked.connect(lambda row, _: self.add_card(self._results[row], 1))
-        self.card_table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
-        self.card_table.customContextMenuRequested.connect(self.show_card_menu)
+        def owned(row):
+            return (f"×{row['owned']}", GOOD) if row["owned"] else ("0", MUTED)
+
+        self.card_browser = CardBrowser(
+            columns=[("Card", lambda row: row["name"]),
+                     ("Type", lambda row: (row["type_line"] or "").split(" — ")[0]),
+                     ("Mana", lambda row: row["mana_cost"] or ""),
+                     ("Set", lambda row: (row["set_code"] or "") + (" ✦" if row["foil"] else "")),
+                     ("Price", lambda row: _money(row["price"])),
+                     ("Owned", owned)],
+            caption=owned,
+            tooltip=lambda row: "\n".join(filter(None, [
+                row["name"], row["type_line"], f"{row['set_name']} ({row['set_code']})",
+                f"Price: {_money(row['price'])}", f"You own {row['owned']}"])),
+        )
+        self.card_browser.selected.connect(self.show_card)
+        self.card_browser.activated.connect(lambda row: self.add_card(row, 1))
+        self.card_browser.menu_requested.connect(self.show_card_menu)
         self._results = []
         self.results_label = QLabel()
         self.results_label.setStyleSheet("color: gray;")
@@ -349,7 +381,7 @@ class ListsWindow(QWidget):
         layout.addWidget(self.db_notice)
         layout.addWidget(self.db_button)
         layout.addWidget(self.db_progress)
-        layout.addWidget(self.card_table, stretch=1)
+        layout.addWidget(self.card_browser, stretch=1)
         layout.addWidget(self.results_label)
         return panel
 
@@ -539,11 +571,6 @@ class ListsWindow(QWidget):
         if len(entries) == 1:
             self.show_card(entries[0], entries[0]["id"])
 
-    def on_card_selection(self):
-        rows = {index.row() for index in self.card_table.selectionModel().selectedRows()}
-        if rows:
-            self.show_card(self._results[rows.pop()])
-
     def change_selected(self, delta):
         # -1 / +1 on the card shown on the left
         row, entry_id = self._card
@@ -622,12 +649,7 @@ class ListsWindow(QWidget):
                        self.remove_selected)
         menu.exec(QCursor.pos())
 
-    def show_card_menu(self, position):
-        index = self.card_table.indexAt(position)
-        if not index.isValid():
-            return
-        self.card_table.selectRow(index.row())
-        row = self._results[index.row()]
+    def show_card_menu(self, row):
         menu = QMenu(self)
         menu.addAction("Add 1", lambda: self.add_card(row, 1))
         menu.addAction("Add 4", lambda: self.add_card(row, 4))
@@ -645,31 +667,26 @@ class ListsWindow(QWidget):
         if "Commander" in {section, *(e["section"] for e in entries)}:
             self.search_cards()  # the commander's colors filter the card list
 
-    def _pick_printing(self, name):
-        # Asks which printing + finish of a card; returns a printings_of row or None
+    def _pick_printing(self, name, action, current=None):
+        # Opens the printing picker; returns an add_card-style record or None
         printings = db.printings_of(name)
         if not printings:
             QMessageBox.information(self, "Printings", "Download the card database to choose printings.")
             return None
-        labels = [f"{p['set_name']} ({p['set_code']}) #{p['collector_number']}"
-                  f"{' · Foil' if p['foil'] == 1 else ' · Etched' if p['foil'] == 2 else ''} · {_money(p['price'])}"
-                  for p in printings]
-        choice, ok = QInputDialog.getItem(self, "Choose Printing", f"Printing of {name}:", labels, 0, False)
-        return printings[labels.index(choice)] if ok else None
+        dialog = PrintingDialog(name, printings, self.card_browser.lightweight, action, current, self)
+        return dialog.choice() if dialog.exec() == QDialog.DialogCode.Accepted else None
 
     def add_printing(self, row):
-        printing = self._pick_printing(row["name"])
+        printing = self._pick_printing(row["name"], "Add to List", (row["scryfall_id"], row["foil"]))
         if printing is not None:
             self.add_card(printing, 1)
 
     def change_printing(self, entry):
-        printing = self._pick_printing(entry["name"])
+        printing = self._pick_printing(entry["name"], "Use This Printing", (entry["scryfall_id"], entry["foil"]))
         if printing is None:
             return
-        record = {key: printing[key] for key in ("name", "scryfall_id", "foil", "set_code", "set_name",
-                                                  "collector_number", "image_url", "price")}
         db.remove_list_entries([entry["id"]])
-        db.add_list_entries(self._list["id"], [{**record, "quantity": entry["quantity"]}], section=entry["section"])
+        db.add_list_entries(self._list["id"], [{**printing, "quantity": entry["quantity"]}], section=entry["section"])
         self._card = None
         self.reload()
 
@@ -694,24 +711,10 @@ class ListsWindow(QWidget):
             rows, total = [], 0
         else:
             rows, total = db.search_cards(not explore, self.search_input.text(), self.type_combo.currentData(),
-                                          colors, format_key, identity, RESULTS_SHOWN)
+                                          colors, format_key, identity, RESULTS_SHOWN,
+                                          self.sort_combo.currentText())
         self._results = rows
-        self.card_table.setRowCount(len(rows))
-        for index, row in enumerate(rows):
-            owned = QTableWidgetItem(f"×{row['owned']}" if row["owned"] else "—")
-            owned.setForeground(GOOD if row["owned"] else MUTED)
-            owned.setToolTip("Copies you own" + ("" if explore else " of this printing"))
-            cells = [QTableWidgetItem(row["name"]),
-                     QTableWidgetItem((row["type_line"] or "").split(" — ")[0]),
-                     QTableWidgetItem(row["mana_cost"] or ""),
-                     QTableWidgetItem((row["set_code"] or "") + (" ✦" if row["foil"] else "")),
-                     QTableWidgetItem(_money(row["price"])), owned]
-            for column, cell in enumerate(cells):
-                self.card_table.setItem(index, column, cell)
-            if not row["owned"]:
-                font = cells[0].font()
-                font.setItalic(True)
-                cells[0].setFont(font)
+        self.card_browser.set_rows(rows)
         where = "in your collection" if not explore else "in Magic"
         text = f"{total:,} card{'s' if total != 1 else ''} {where}"
         if total > len(rows):
@@ -748,7 +751,7 @@ class ListsWindow(QWidget):
         # Prices older than a day refresh on their own (once per entry per session)
         if self._refreshing or self._list is None:
             return
-        work = [(e["id"], e["scryfall_id"], bool(e["foil"])) for e in self._entries
+        work = [(e["id"], e["scryfall_id"], e["foil"]) for e in self._entries
                 if e["scryfall_id"] and _stale(e) and e["id"] not in self._price_checked]
         if not work:
             return

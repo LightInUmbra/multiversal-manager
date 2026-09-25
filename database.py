@@ -570,15 +570,29 @@ def card_info(name):
 
 
 def printings_of(name):
-    # Every printing and finish of a card, from the Finance card list (needs the card database)
+    # Every printing and finish of a card, with how many of each you own (needs the card database)
     with _connect() as conn:
         return conn.execute("""
-            SELECT scryfall_id, foil, name, set_code, set_name, collector_number, image_url, price
-            FROM watchlist WHERE name = ? COLLATE NOCASE ORDER BY set_name COLLATE NOCASE, collector_number, foil
+            SELECT w.scryfall_id, w.foil, w.name, w.set_code, w.set_name, w.collector_number, w.rarity,
+                   w.image_url, w.price,
+                   COALESCE((SELECT SUM(c.quantity) FROM collection c
+                             WHERE c.scryfall_id = w.scryfall_id AND c.foil = w.foil), 0) AS owned
+            FROM watchlist w WHERE w.name = ? COLLATE NOCASE
+            ORDER BY w.set_name COLLATE NOCASE, w.collector_number, w.foil
         """, (name,)).fetchall()
 
 
-def search_cards(owned_only, text="", card_type="", colors="", format_key=None, identity=None, limit=300):
+# Card list sort orders -> ORDER BY (fixed strings, never user text)
+CARD_SORTS = {
+    "Name": "name COLLATE NOCASE",
+    "Mana value": "cmc IS NULL, cmc, name COLLATE NOCASE",
+    "Price (high to low)": "price IS NULL, price DESC, name COLLATE NOCASE",
+    "Owned (most first)": "owned DESC, name COLLATE NOCASE",
+}
+
+
+def search_cards(owned_only, text="", card_type="", colors="", format_key=None, identity=None, limit=300,
+                 sort="Name"):
     """Cards for the deck builder's card list, by name: (rows, total matches).
     owned_only lists the collection (one row per printing + finish you own); otherwise
     every card in the card database (one row per card, using a representative
@@ -589,7 +603,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
     if owned_only:
         base = """
             SELECT c.name, c.scryfall_id, c.foil, c.set_code, c.set_name, c.collector_number, c.image_url,
-                   MAX(c.price) AS price, SUM(c.quantity) AS owned, o.type_line, o.mana_cost, o.colors,
+                   MAX(c.price) AS price, SUM(c.quantity) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
                    o.color_identity, o.oracle_text, o.legalities
             FROM collection c LEFT JOIN oracle_cards o ON o.name = c.name
             GROUP BY c.scryfall_id, c.foil, c.name
@@ -597,7 +611,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
     else:
         base = """
             SELECT o.name, o.scryfall_id, o.foil, o.set_code, o.set_name, o.collector_number, o.image_url,
-                   o.price, COALESCE(own.copies, 0) AS owned, o.type_line, o.mana_cost, o.colors,
+                   o.price, COALESCE(own.copies, 0) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
                    o.color_identity, o.oracle_text, o.legalities
             FROM oracle_cards o LEFT JOIN (
                 SELECT name, SUM(quantity) AS copies FROM collection GROUP BY name COLLATE NOCASE
@@ -624,7 +638,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
     filters = f"WHERE {' AND '.join(where)}" if where else ""
     with _connect() as conn:
         total = conn.execute(f"SELECT COUNT(*) FROM ({base}) {filters}", params).fetchone()[0]
-        rows = conn.execute(f"SELECT * FROM ({base}) {filters} ORDER BY name COLLATE NOCASE LIMIT ?",
+        rows = conn.execute(f"SELECT * FROM ({base}) {filters} ORDER BY {CARD_SORTS[sort]} LIMIT ?",
                             params + [limit]).fetchall()
         return rows, total
 

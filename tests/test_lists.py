@@ -92,6 +92,21 @@ def test_card_database_from_bulk_data():
     assert finance.oracle_record({"id": "t", "name": "Goblin", "layout": "token"}) is None
 
 
+def test_printings_grouped_with_finishes_and_owned(temp_db):
+    from card_browser import group_printings
+    temp_db.watch_cards([
+        {"scryfall_id": sid, "foil": foil, "name": "Opt", "set_code": code, "set_name": name,
+         "collector_number": "1", "rarity": "common", "image_url": None, "price": price}
+        for sid, foil, code, name, price in [("a", 0, "XLN", "Ixalan", 0.25), ("a", 1, "XLN", "Ixalan", 1.50),
+                                             ("b", 0, "DOM", "Dominaria", 0.10)]])
+    temp_db.add_card("Opt", "Ixalan", 1.50, 2, scryfall_id="a", foil=True)
+    printings = group_printings(temp_db.printings_of("opt"))
+    assert [(p["set_code"], p["finishes"], p["owned"], p["price"]) for p in printings] == [
+        ("DOM", [(0, 0.10, 0)], 0, 0.10),
+        ("XLN", [(0, 0.25, 0), (1, 1.50, 2)], 2, 0.25),
+    ]
+
+
 def test_list_storage(temp_db):
     deck = temp_db.create_list("Izzet", "deck")
     wishlist = temp_db.create_list("Wants", "wishlist")

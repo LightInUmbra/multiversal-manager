@@ -94,7 +94,7 @@ class ReviewEntry:
     row: object
     card: object = None
     state: str = NOT_FOUND
-    foil: bool = False
+    foil: int = 0  # finish code: 0 non-foil, 1 foil, 2 etched
     price: float = None  # None = Scryfall's price for the printing + finish
     quantity: int = 1
     include: bool = True
@@ -243,7 +243,7 @@ class ImportReviewDialog(QDialog):
         self.table.setItem(index, QTY_COL, quantity)
         self.table.setItem(index, NAME_COL, text_item(name))
         self.table.setItem(index, PRINTING_COL, text_item(printing))
-        self.table.setItem(index, FINISH_COL, text_item("Foil" if entry.foil else ""))
+        self.table.setItem(index, FINISH_COL, text_item(scryfall.finish_label(entry.foil)))
         self.table.setItem(index, STATUS_COL, status)
         self.table.blockSignals(False)
 
@@ -306,7 +306,7 @@ class ImportReviewDialog(QDialog):
         card = self.picker.selected_printing()
         if entry is None or card is None:
             return
-        foil = self.picker.is_foil()
+        foil = self.picker.finish()
         auto_price = scryfall.price_for(card, foil)
         # An exact match stays "from file" unless the user switches to another printing
         if entry.state != EXACT or card.id != entry.card.id:

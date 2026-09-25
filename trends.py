@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 
 import database as db
+import scryfall
 from charts import HistoryChart
 
 # (label, days back; None = since the first recorded price)
@@ -166,7 +167,7 @@ class TrendsDialog(QDialog):
         table.setRowCount(len(movers))
         for index, (card_id, change) in enumerate(movers):
             row = rows[card_id]
-            name = row["name"] + (" (foil)" if row["foil"] else "")
+            name = row["name"] + (f" ({scryfall.finish_label(row['foil']).lower()})" if row["foil"] else "")
             if row["set_code"]:
                 name += f"  ·  {row['set_code']}"
             if change.quantity > 1:

@@ -35,6 +35,11 @@ def test_price_for_finish():
     assert scryfall.price_for(card, foil=False) == 1.5
     assert scryfall.price_for(card, foil=True) == 4.0
 
+    etched = _card(prices={"usd": None, "usd_foil": None, "usd_etched": "9.25"}, finishes=["etched"])
+    assert scryfall.price_for(etched, 2) == 9.25
+    assert scryfall.finish_codes(etched) == [2]
+    assert scryfall.finish_label(2) == "Etched" and scryfall.finish_label(0) == ""
+
 
 def test_printing_label():
     assert scryfall.printing_label(_card()) == "Commander 2021 (C21) #263 - $1.50"

@@ -75,12 +75,27 @@ def image_url_for(card):
     return None
 
 
+# Finishes, stored as the `foil` code everywhere: code -> (Scryfall's name, label)
+FINISHES = {0: ("nonfoil", "Non-foil"), 1: ("foil", "Foil"), 2: ("etched", "Etched")}
+
+
+def finish_label(code):
+    # "" for non-foil, since that's the default, else "Foil" / "Etched"
+    return FINISHES[int(code)][1] if code else ""
+
+
+def finish_codes(card):
+    # The finish codes a printing exists in
+    return [code for code, (name, _) in FINISHES.items() if name in card.finishes]
+
+
 def price_for(card, foil):
-    return card.price_usd_foil if foil else card.price_usd
+    # foil: a finish code (True/False work too, as foil/non-foil)
+    return (card.price_usd, card.price_usd_foil, card.price_usd_etched)[int(foil)]
 
 
 def printing_label(card):
-    price = card.price_usd or card.price_usd_foil
+    price = card.price_usd or card.price_usd_foil or card.price_usd_etched
     price_text = f"${price:.2f}" if price else "no price"
     return f"{card.set_name} ({card.set}) #{card.collector_number} - {price_text}"
 

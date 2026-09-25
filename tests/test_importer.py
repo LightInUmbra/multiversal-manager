@@ -194,3 +194,10 @@ def test_alternate_names_are_found_by_fuzzy_lookup_and_flagged():
     assert [(row.name, card.name) for row, card in result.matched] == [("Unstable Harmonics", "Rhystic Study")]
     assert len(result.approximate) == 1
     assert [row.name for row in result.unmatched] == ["Totally Fake Card"]
+
+
+def test_etched_finish_from_csv_and_text():
+    rows, _ = importer.parse_csv("Name,Foil\nSol Ring,etched\nOpt,foil\nShock,2\nNegate,\n")
+    assert [(r.name, r.foil) for r in rows] == [("Sol Ring", 2), ("Opt", 1), ("Shock", 2), ("Negate", 0)]
+    rows, _ = importer.parse_text("1 Sol Ring (CMR) 472 *E*\n1 Opt (etched)\n1 Shock *F*\n")
+    assert [r.foil for r in rows] == [2, 2, 1]
