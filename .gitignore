@@ -221,3 +221,6 @@ __marimo__/
 collection.db
 image_cache/
 multiversal-manager/
+
+# Claude Code personal settings
+.claude/settings.local.json
