@@ -63,7 +63,6 @@ The goal: add a card on your phone while you're at the store, and it's already t
 
 ### Coming next on desktop
 
-- Card image grid view
 - A standalone Windows installer
 
 ---
