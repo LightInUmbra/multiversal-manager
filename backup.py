@@ -25,6 +25,8 @@ _OWNED = "EXISTS (SELECT 1 FROM live.collection c WHERE c.scryfall_id = t.scryfa
 _TRACKED = ("EXISTS (SELECT 1 FROM live.watchlist w "
             "WHERE w.scryfall_id = t.scryfall_id AND w.foil = t.foil AND w.tracked)")
 _BLANKED = {"watchlist": {"set_name", "rarity", "image_url", "price", "price_updated"}}
+# Tables backed up empty: entirely re-downloaded with the card database
+_REDOWNLOADED = {"oracle_cards"}
 
 
 def backup_dir():
@@ -59,7 +61,9 @@ def make_backup(name=None, keep_tracked_history=False):
         with conn:
             for table, sql in tables:
                 conn.execute(sql)
-                columns = [row[1] for row in conn.execute(f"PRAGMA live.table_info({table})")]
+                if table in _REDOWNLOADED:
+                    continue
+                columns =[row[1] for row in conn.execute(f"PRAGMA live.table_info({table})")]
                 blanked = _BLANKED.get(table, set())
                 select = ", ".join("NULL" if c in blanked else c for c in columns)
                 where = history_filter if table == "price_history" else ""

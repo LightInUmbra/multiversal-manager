@@ -7,6 +7,7 @@ and 90 days of back history (from MTGJSON); the mode only decides what's listed.
 """
 
 # Imports
+import json
 from datetime import date, timedelta
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSettings, QTimer
@@ -66,6 +67,49 @@ def watch_records(data):
     } for finish, (code, key) in FINISHES.items() if finish in card.finishes]
 
 
+# Scryfall layouts that aren't cards you put in a deck
+_NOT_DECK_CARDS = {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar",
+                   "augment", "host", "reversible_card"}
+
+
+def oracle_record(data):
+    # The card database row for a raw Scryfall card dict (see db.replace_oracle_cards),
+    # or None for tokens, emblems and the like
+    if data.get("layout") in _NOT_DECK_CARDS or data.get("set_type") == "memorabilia":
+        return None
+    faces = data.get("card_faces") or []
+    front = faces[0] if faces else {}
+    finishes = data.get("finishes") or []
+    finish = next((f for f in FINISHES if f in finishes), "nonfoil")
+    code, price_key = FINISHES[finish]
+    price = (data.get("prices") or {}).get(price_key)
+    return {
+        "name": data["name"],
+        "type_line": data.get("type_line") or front.get("type_line", ""),
+        "mana_cost": data.get("mana_cost") or front.get("mana_cost", ""),
+        "cmc": data.get("cmc", 0),
+        "colors": "".join(data.get("colors") or front.get("colors") or []),
+        "color_identity": "".join(data.get("color_identity") or []),
+        "oracle_text": data.get("oracle_text") or "\n\n".join(f.get("oracle_text", "") for f in faces),
+        "legalities": json.dumps(data.get("legalities") or {}),
+        "scryfall_id": data["id"],
+        "set_code": (data.get("set") or "").upper(),
+        "set_name": data.get("set_name"),
+        "collector_number": data.get("collector_number"),
+        "rarity": data.get("rarity"),
+        "image_url": scryfall.image_url_for(scryfall.Card(data)),
+        "foil": code,
+        "price": float(price) if price else None,
+    }
+
+
+def _printing_rank(data):
+    # Which printing stands for a card in the card list: a regular booster printing
+    # over promos and variants, newest first
+    return (not data.get("promo"), bool(data.get("booster")), not data.get("variation"),
+            data.get("released_at") or "")
+
+
 def change_for(row):
     # (each, percent) since the period's start, or None without a price then and now
     if not row["past"] or not row["price"]:
@@ -81,11 +125,12 @@ def backfill_due(last_backfill, today=None):
 
 # Background work (runs on a worker thread)
 
-def update_market(last_bulk, last_backfill, track_new=False, progress=None):
-    """Brings the card list and prices up to date: Scryfall's bulk file when it has a
-    newer one, and MTGJSON's 90 days of history when a backfill is due. New printings
-    are tracked if track_new. Returns {"bulk": updated_at, "backfill": day} for the
-    steps that ran."""
+def update_market(last_bulk, last_backfill, track_new=False, history=True, progress=None):
+    """Brings the card database and prices up to date: Scryfall's bulk file when it
+    has a newer one (every printing for Finance, and every card's rules and legality
+    for the deck builder), and MTGJSON's 90 days of history when a backfill is due and
+    history is wanted. New printings are tracked if track_new. Returns
+    {"bulk": updated_at, "backfill": day} for the steps that ran."""
     done = {}
 
     def step(label):
@@ -93,13 +138,20 @@ def update_market(last_bulk, last_backfill, track_new=False, progress=None):
 
     info = scryfall.bulk_info()
     if info is not None and info["updated_at"] != last_bulk:
-        records = []
-        for data in scryfall.iter_bulk_data(info, step("Downloading every card's price from Scryfall…")):
-            if not data.get("digital"):
-                records.extend(watch_records(data))
+        records, cards = [], {}
+        for data in scryfall.iter_bulk_data(info, step("Downloading the card database from Scryfall…")):
+            if data.get("digital"):
+                continue
+            records.extend(watch_records(data))
+            rank = _printing_rank(data)
+            if data["name"] not in cards or rank > cards[data["name"]][0]:
+                card = oracle_record(data)
+                if card is not None:
+                    cards[data["name"]] = (rank, card)
         db.watch_cards(records, track_new)
+        db.replace_oracle_cards([card for _, card in cards.values()])
         done["bulk"] = info["updated_at"]
-    if backfill_due(last_backfill):
+    if history and backfill_due(last_backfill):
         db.add_price_history(mtgjson.price_history(step("Downloading 90 days of price history from MTGJSON…")))
         done["backfill"] = date.today().isoformat()
     return done
@@ -527,8 +579,9 @@ class FinanceWindow(QWidget):
         for button in (self.refresh_button, self.track_button):
             button.setEnabled(False)
         self.status_label.setText("Checking for new prices…")
-        background.run(update_market, self.settings.value("finance_bulk_updated"),
-                       self.settings.value("finance_backfilled"), self.mode == POPULATED,
+        # No card database yet (it came after Finance) means downloading even an unchanged bulk file
+        last_bulk = self.settings.value("finance_bulk_updated") if db.has_card_database() else None
+        background.run(update_market, last_bulk, self.settings.value("finance_backfilled"), self.mode == POPULATED,
                        on_success=self._on_updated, on_error=self._on_failed, on_progress=self._on_progress)
 
     def _on_progress(self, value):

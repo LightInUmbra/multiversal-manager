@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QProgressDialog, QMenu, QComboBox,
+    QMenu, QComboBox,
 )
 
 import background
@@ -19,11 +19,11 @@ import backup
 import copy_details
 import database as db
 import finance
-import importer
+import lists
 import scryfall
 import trends
 from add_card_dialog import CardDialog
-from import_review_dialog import ImportReviewDialog
+from import_review_dialog import count as _count, start_import
 from card_image import CardImage
 from charts import HistoryChart
 
@@ -61,11 +61,6 @@ def _item(value, align_right=False):
     return item
 
 
-def _count(n, word):
-    # "1 entry", "3 entries", "1,204 cards"
-    plural = word[:-1] + "ies" if word.endswith("y") else word + "s"
-    return f"{n:,} {word if n == 1 else plural}"
-
 
 def _money(value):
     # Scryfall has no price for some printings; show that as a dash rather than $0.00
@@ -94,18 +89,6 @@ def _price_is_stale(row):
     updated = datetime.fromisoformat(row["price_updated"])
     return datetime.now(timezone.utc) - updated > PRICE_MAX_AGE
 
-
-def _fetch_prices(rows):
-    # rows: list of (card_id, scryfall_id, foil). Returns (updates, missing_count).
-    cards = scryfall.get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
-    updates, missing = [], 0
-    for card_id, scryfall_id, foil in rows:
-        card = cards.get(scryfall_id)
-        if card is None:
-            missing += 1
-            continue
-        updates.append((card_id, scryfall.price_for(card, foil)))
-    return updates, missing
 
 
 class MainWindow(QMainWindow):
@@ -213,6 +196,9 @@ class MainWindow(QMainWindow):
         finance_button = QPushButton("Finance…")
         finance_button.setToolTip("Price spikes and drops across the cards you follow, or every card")
         finance_button.clicked.connect(self.show_finance)
+        lists_button = QPushButton("Deck Builder…")
+        lists_button.setToolTip("Build decks for any format, plus binders and wishlists")
+        lists_button.clicked.connect(lambda: self.show_lists())
 
         add_button = QPushButton("Add Card")
         add_button.clicked.connect(self.on_add_card_clicked)
@@ -229,6 +215,7 @@ class MainWindow(QMainWindow):
         button_layout.addSpacing(12)
         button_layout.addWidget(self.change_label, stretch=1)
         button_layout.addWidget(trends_button)
+        button_layout.addWidget(lists_button)
         button_layout.addWidget(finance_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.edit_button)
@@ -285,6 +272,9 @@ class MainWindow(QMainWindow):
         finance_action = QAction("&Finance…", self, shortcut="Ctrl+Shift+F")
         finance_action.triggered.connect(self.show_finance)
         view_menu.addAction(finance_action)
+        lists_action = QAction("&Deck Builder…", self, shortcut="Ctrl+L")
+        lists_action.triggered.connect(lambda: self.show_lists())
+        view_menu.addAction(lists_action)
 
         help_menu = self.menuBar().addMenu("&Help")
         about_action = QAction(f"&About {APP_NAME}", self)
@@ -343,6 +333,9 @@ class MainWindow(QMainWindow):
         self.select_ids(selected_ids)
         self.apply_filter()
         self.update_summary()
+        # Lists show how many of their cards you own, so keep an open Lists window current
+        if getattr(self, "_lists", None) is not None:
+            self._lists.reload()
 
     def _change_item(self, row):
         change = self._changes.get(row["id"])
@@ -370,6 +363,11 @@ class MainWindow(QMainWindow):
 
     def show_trends(self):
         trends.TrendsDialog(self.period_combo.currentText(), self).exec()
+
+    def show_lists(self, list_id=None):
+        if getattr(self, "_lists", None) is None:
+            self._lists = lists.ListsWindow(self)
+        self._lists.select_list(list_id)
 
     def show_finance(self):
         # Separate window that stays open alongside the collection. The first time,
@@ -542,9 +540,25 @@ class MainWindow(QMainWindow):
             view = menu.addAction("View on Scryfall", self.open_on_scryfall)
             view.setEnabled(bool(row["set_code"] and row["collector_number"]))
             menu.addSeparator()
+        add_to = menu.addMenu("Add to List")
+        for row in db.get_lists():
+            add_to.addAction(f"{row['name']} ({lists.KINDS.get(row['kind'], row['kind'])})",
+                             lambda list_id=row["id"]: self.add_to_list(ids, list_id))
+        add_to.addSeparator()
+        add_to.addAction("New List…", lambda: self.add_to_list(ids, lists.ask_new_list(self)))
+        menu.addSeparator()
         label = "Remove" if len(ids) == 1 else f"Remove {_count(len(ids), 'entry')}"
         menu.addAction(label, self.on_remove_selected_clicked)
         return menu
+
+    def add_to_list(self, ids, list_id):
+        # Copies the selected entries (printing, finish and quantity) onto a list
+        if list_id is None:
+            return
+        kind = next(row["kind"] for row in db.get_lists() if row["id"] == list_id)
+        db.add_list_entries(list_id, [dict(self._rows_by_id[i]) for i in ids],
+                            section="Main" if kind == "deck" else "")
+        self.show_lists(list_id)
 
     def confirm_remove(self, ids):
         if len(ids) == 1:
@@ -575,7 +589,7 @@ class MainWindow(QMainWindow):
         self.refresh_button.setEnabled(False)
         self.statusBar().showMessage(f"Refreshing prices for {_count(len(rows), 'entry')}…")
         work = [(r["id"], r["scryfall_id"], bool(r["foil"])) for r in rows]
-        background.run(_fetch_prices, work, on_success=self._on_prices, on_error=self._on_prices_failed)
+        background.run(scryfall.fetch_prices, work, on_success=self._on_prices, on_error=self._on_prices_failed)
 
     def _on_prices(self, result):
         updates, missing = result
@@ -599,47 +613,10 @@ class MainWindow(QMainWindow):
             self.statusBar().clearMessage()
 
     def import_file(self):
-        path, _ = QFileDialog.getOpenFileName(
-            self, "Import Cards", "",
-            "Card lists (*.csv *.txt *.dec *.dek);;All files (*)",
-        )
-        if not path:
-            return
-        try:
-            rows, errors = importer.parse_file(path)
-        except (OSError, UnicodeDecodeError) as error:
-            QMessageBox.warning(self, "Import", f"Couldn't read that file:\n{error}")
-            return
-        if not rows:
-            QMessageBox.warning(self, "Import", "\n".join(errors) or "No cards found in the file.")
-            return
+        start_import(self, "your collection", self._on_import_reviewed)
 
-        total = sum(row.quantity for row in rows)
-        question = QMessageBox(
-            QMessageBox.Icon.Question, "Import",
-            f"Found {_count(total, 'card')} in {_count(len(rows), 'entry')}.\n\n"
-            "Look them up on Scryfall? You'll be able to review them and choose "
-            "printings before anything is added to your collection.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, self,
-        )
-        if errors:
-            question.setInformativeText(f"{_count(len(errors), 'line')} couldn't be read and will be skipped.")
-            question.setDetailedText("\n".join(errors))
-        if question.exec() != QMessageBox.StandardButton.Yes:
-            return
-
-        self._import_progress = QProgressDialog("Looking up cards on Scryfall…", None, 0, 0, self)
-        self._import_progress.setWindowTitle("Import")
-        self._import_progress.setWindowModality(Qt.WindowModality.WindowModal)
-        self._import_progress.setMinimumDuration(0)
-        self._import_progress.show()
-        background.run(importer.resolve, rows, on_success=self._on_import_resolved,
-                       on_error=self._on_import_failed)
-
-    def _on_import_resolved(self, result):
-        self._import_progress.close()
-        review = ImportReviewDialog(result, self)
-        if review.exec() != QDialog.DialogCode.Accepted:
+    def _on_import_reviewed(self, review):
+        if review is None:
             self.statusBar().showMessage("Import cancelled, nothing was added.", 8000)
             return
         records = review.records()
@@ -650,10 +627,6 @@ class MainWindow(QMainWindow):
         imported = sum(record["quantity"] for record in records)
         self.statusBar().showMessage(
             f"Imported {_count(imported, 'card')} ({_count(len(records), 'entry')}).", 10000)
-
-    def _on_import_failed(self, message):
-        self._import_progress.close()
-        QMessageBox.warning(self, "Import", f"Couldn't reach Scryfall, nothing was imported:\n{message}")
 
     def export_csv(self):
         path, _ = QFileDialog.getSaveFileName(self, "Export Collection", "collection.csv", "CSV files (*.csv)")

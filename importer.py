@@ -32,11 +32,21 @@ _HEADER_ALIASES = {
     "condition": {"condition", "cond", "grade"},
     "language": {"language", "lang"},
     "notes": {"notes", "note", "comment", "comments"},
+    "section": {"board", "section", "category", "zone"},
 }
 _FOIL_VALUES = {"foil", "etched", "true", "yes", "y", "1"}
 
-# Section headers that show up in exported deck lists
-_TEXT_SECTION_HEADERS = {"deck", "sideboard", "commander", "companion", "maybeboard", "mainboard", "about"}
+# Deck sections, and the headers / board names other tools use for them. Cards under
+# "About" (Arena's deck name line) aren't cards at all.
+SECTIONS = ["Commander", "Companion", "Main", "Sideboard", "Maybeboard"]
+_SECTION_NAMES = {
+    "deck": "Main", "main": "Main", "mainboard": "Main", "main deck": "Main",
+    "sideboard": "Sideboard", "side": "Sideboard", "sb": "Sideboard",
+    "commander": "Commander", "commanders": "Commander",
+    "companion": "Companion", "maybeboard": "Maybeboard", "maybe": "Maybeboard", "considering": "Maybeboard",
+    "about": None,
+}
+_TEXT_SIDEBOARD_PREFIX = re.compile(r"^SB:\s*", re.IGNORECASE)
 _TEXT_FOIL_MARKERS = re.compile(r"\s*(\*F\*|\*E\*|\(foil\)|\[foil\])\s*$", re.IGNORECASE)
 _TEXT_QUANTITY = re.compile(r"^(\d+)\s*x?\s+(.+)$", re.IGNORECASE)
 _TEXT_SET = re.compile(r"^(?P<name>.+?)\s+[\(\[](?P<set>[A-Za-z0-9]{2,6})[\)\]](?:\s+(?P<cn>\S+))?$")
@@ -55,6 +65,7 @@ class ImportRow:
     condition: str = copy_details.DEFAULT_CONDITION
     language: str = copy_details.DEFAULT_LANGUAGE
     notes: str = ""
+    section: str = "Main"  # deck section; only used when importing into a deck
 
     def details(self):
         # Condition, language and notes as add_card keywords
@@ -157,6 +168,7 @@ def parse_csv(text):
             condition=copy_details.parse_condition(get("condition")),
             language=copy_details.parse_language(get("language")),
             notes=get("notes"),
+            section=_SECTION_NAMES.get(get("section").lower()) or "Main",
         )
         if not row.name and not row.scryfall_id:
             errors.append(f"Line {line_number}: no card name")
@@ -167,12 +179,21 @@ def parse_csv(text):
 
 def parse_text(text):
     rows, errors = [], []
+    section = "Main"
     for line_number, raw in enumerate(text.splitlines(), start=1):
         line = raw.strip()
         if not line or line.startswith(("#", "//")):
             continue
-        if line.rstrip(":").lower() in _TEXT_SECTION_HEADERS:
+        header = line.rstrip(":").strip().lower()
+        if header in _SECTION_NAMES:
+            section = _SECTION_NAMES[header]
             continue
+        if section is None:  # lines under "About"
+            continue
+
+        row_section = section
+        if _TEXT_SIDEBOARD_PREFIX.match(line):  # older .dec files: "SB: 2 Duress"
+            line, row_section = _TEXT_SIDEBOARD_PREFIX.sub("", line), "Sideboard"
 
         foil = False
         marker = _TEXT_FOIL_MARKERS.search(line)
@@ -193,7 +214,7 @@ def parse_text(text):
             name, set_code, number = match.group("name"), match.group("set").lower(), match.group("cn") or ""
 
         rows.append(ImportRow(line=line_number, quantity=quantity, name=name.strip(),
-                              set_code=set_code, collector_number=number, foil=foil))
+                              set_code=set_code, collector_number=number, foil=foil, section=row_section))
     if not rows and not errors:
         errors.append("No cards found in the file.")
     return rows, errors

@@ -5,11 +5,69 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
     QCheckBox, QDialogButtonBox, QHeaderView, QAbstractItemView, QSplitter, QWidget,
-    QMessageBox, QPushButton,
+    QMessageBox, QPushButton, QFileDialog, QProgressDialog,
 )
 
+import background
+import importer
 import scryfall
 from printing_picker import PrintingPicker
+
+
+def count(n, word):
+    # "1 entry", "3 entries", "1,204 cards"
+    plural = word[:-1] + "ies" if word.endswith("y") else word + "s"
+    return f"{n:,} {word if n == 1 else plural}"
+
+
+def start_import(parent, destination, on_done):
+    """The whole import flow: pick a file, confirm what was found, look the cards up
+    on Scryfall in the background, then review. on_done(review) gets the accepted
+    ImportReviewDialog, or None if the review was cancelled. destination says where
+    the cards are going, e.g. "your collection"."""
+    path, _ = QFileDialog.getOpenFileName(parent, "Import Cards", "",
+                                          "Card lists (*.csv *.txt *.dec *.dek);;All files (*)")
+    if not path:
+        return
+    try:
+        rows, errors = importer.parse_file(path)
+    except (OSError, UnicodeDecodeError) as error:
+        QMessageBox.warning(parent, "Import", f"Couldn't read that file:\n{error}")
+        return
+    if not rows:
+        QMessageBox.warning(parent, "Import", "\n".join(errors) or "No cards found in the file.")
+        return
+
+    total = sum(row.quantity for row in rows)
+    question = QMessageBox(
+        QMessageBox.Icon.Question, "Import",
+        f"Found {count(total, 'card')} in {count(len(rows), 'entry')}.\n\n"
+        "Look them up on Scryfall? You'll be able to review them and choose "
+        f"printings before anything is added to {destination}.",
+        QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No, parent,
+    )
+    if errors:
+        question.setInformativeText(f"{count(len(errors), 'line')} couldn't be read and will be skipped.")
+        question.setDetailedText("\n".join(errors))
+    if question.exec() != QMessageBox.StandardButton.Yes:
+        return
+
+    progress = QProgressDialog("Looking up cards on Scryfall…", None, 0, 0, parent)
+    progress.setWindowTitle("Import")
+    progress.setWindowModality(Qt.WindowModality.WindowModal)
+    progress.setMinimumDuration(0)
+    progress.show()
+
+    def resolved(result):
+        progress.close()
+        review = ImportReviewDialog(result, parent)
+        on_done(review if review.exec() == QDialog.DialogCode.Accepted else None)
+
+    def failed(message):
+        progress.close()
+        QMessageBox.warning(parent, "Import", f"Couldn't reach Scryfall, nothing was imported:\n{message}")
+
+    background.run(importer.resolve, rows, on_success=resolved, on_error=failed)
 
 COLUMNS = ["Import", "Qty", "Name", "Printing", "Finish", "Status"]
 INCLUDE_COL, QTY_COL, NAME_COL, PRINTING_COL, FINISH_COL, STATUS_COL = range(len(COLUMNS))
@@ -287,6 +345,10 @@ class ImportReviewDialog(QDialog):
                 return
         self.accept()
 
+    def included(self):
+        # The ReviewEntry of every card being imported
+        return [e for e in self.entries if e.include and e.card is not None]
+
     def records(self):
         # add_card keyword dicts for every entry being imported
-        return [e.record() for e in self.entries if e.include and e.card is not None]
+        return [e.record() for e in self.included()]

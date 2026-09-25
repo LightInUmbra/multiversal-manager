@@ -152,6 +152,19 @@ def get_cards_by_id(scryfall_ids):
     return {card.id: card for card in get_collection([{"id": i} for i in ids])}
 
 
+def fetch_prices(rows):
+    # rows: list of (row_id, scryfall_id, foil). Returns ([(row_id, current price)], missing count).
+    cards = get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
+    updates, missing = [], 0
+    for row_id, scryfall_id, foil in rows:
+        card = cards.get(scryfall_id)
+        if card is None:
+            missing += 1
+            continue
+        updates.append((row_id, price_for(card, foil)))
+    return updates, missing
+
+
 def fuzzy_card(name):
     # Scryfall's best guess for a misspelled or alternate card name, or None
     data = _get_json("/cards/named", {"fuzzy": name})
