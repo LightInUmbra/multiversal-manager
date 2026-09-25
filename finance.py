@@ -10,10 +10,11 @@ and 90 days of back history (from MTGJSON); the mode only decides what's listed.
 from datetime import date, timedelta
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSettings, QTimer
+from PySide6.QtGui import QAction, QCursor, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QDoubleSpinBox, QTableView,
     QHeaderView, QAbstractItemView, QPushButton, QSplitter, QMessageBox, QDialog, QDialogButtonBox,
-    QProgressBar,
+    QProgressBar, QMenu,
 )
 
 import background
@@ -42,6 +43,10 @@ BACKFILL_EVERY = timedelta(days=7)
 
 def _settings():
     return QSettings("Multiversal Manager", "Multiversal Manager")
+
+
+def _printings(n):
+    return f"{n:,} printing{'s' if n != 1 else ''}"
 
 
 def watch_records(data):
@@ -76,10 +81,11 @@ def backfill_due(last_backfill, today=None):
 
 # Background work (runs on a worker thread)
 
-def update_market(last_bulk, last_backfill, progress=None):
+def update_market(last_bulk, last_backfill, track_new=False, progress=None):
     """Brings the card list and prices up to date: Scryfall's bulk file when it has a
-    newer one, and MTGJSON's 90 days of history when a backfill is due. Returns
-    {"bulk": updated_at, "backfill": day} for the steps that ran."""
+    newer one, and MTGJSON's 90 days of history when a backfill is due. New printings
+    are tracked if track_new. Returns {"bulk": updated_at, "backfill": day} for the
+    steps that ran."""
     done = {}
 
     def step(label):
@@ -91,7 +97,7 @@ def update_market(last_bulk, last_backfill, progress=None):
         for data in scryfall.iter_bulk_data(info, step("Downloading every card's price from Scryfall…")):
             if not data.get("digital"):
                 records.extend(watch_records(data))
-        db.watch_cards(records)
+        db.watch_cards(records, track_new)
         done["bulk"] = info["updated_at"]
     if backfill_due(last_backfill):
         db.add_price_history(mtgjson.price_history(step("Downloading 90 days of price history from MTGJSON…")))
@@ -105,9 +111,11 @@ def ask_mode(parent):
                       parent=parent)
     box.setInformativeText(
         "<b>Track every card</b>: every paper printing and finish in Magic (about 160,000) is "
-        "listed and tracked, so you can watch the whole market.<br><br>"
+        "listed and tracked, so you can watch the whole market. New printings are added as "
+        "they come out.<br><br>"
         "<b>Start empty</b>: the same card database is loaded, but nothing is listed until you "
         "pick the cards, printings, sets or finishes you want to follow.<br><br>"
+        "Either way you can add or remove cards whenever you like.<br><br>"
         "Either way, the first open downloads Scryfall's card data (about 80 MB) and 90 days of "
         "price history from MTGJSON (about 60 MB). That takes a few minutes and adds a few "
         "hundred MB to the database. After that, prices update once a day, as often as Scryfall "
@@ -204,6 +212,8 @@ class WatchlistModel(QAbstractTableModel):
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.ToolTipRole and column >= CHANGE_COL:
             return f"${row['past']:,.2f} → ${row['price']:,.2f}" if change else "No price recorded that far back"
+        if role == Qt.ItemDataRole.ToolTipRole and column in (NAME_COL, SET_COL):
+            return self.data(index)
         return None
 
 
@@ -215,9 +225,13 @@ def _table(model):
     table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
     table.setAlternatingRowColors(True)
     table.verticalHeader().setVisible(False)
+    # The small columns get fixed widths so the card name gets the rest of the room.
+    # (Resize-to-contents would measure all ~160k rows.) Full names are in the tooltip.
     header = table.horizontalHeader()
+    for column, width in ((SET_COL, 200), (NUMBER_COL, 50), (FINISH_COL, 60), (RARITY_COL, 75),
+                          (PRICE_COL, 80), (CHANGE_COL, 95), (PERCENT_COL, 80)):
+        header.resizeSection(column, width)
     header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
-    header.resizeSection(SET_COL, 260)
     return table
 
 
@@ -225,14 +239,15 @@ class TrackDialog(QDialog):
     """Pick printings to track from the local card list: filter by card or set, then
     track the selected rows or everything shown (every printing of a card, a whole set…)."""
 
-    def __init__(self, rows, parent=None):
+    def __init__(self, rows, text="", parent=None):
         super().__init__(parent)
         self.setWindowTitle("Track Cards")
-        self.resize(1000, 640)
+        self.resize(1100, 640)
         self.model = WatchlistModel(self)
         self.model.set_rows(rows)
+        self.model.set_filter(text, 0.0, SHOW_ALL)
 
-        self.filter_input = QLineEdit()
+        self.filter_input = QLineEdit(text)
         self.filter_input.setPlaceholderText("Card name, set name or set code…")
         self.filter_input.setClearButtonEnabled(True)
         timer = QTimer(self, singleShot=True, interval=250)
@@ -264,8 +279,9 @@ class TrackDialog(QDialog):
 
 
 class FinanceWindow(QWidget):
-    """Spikes, drops and price history. mode is POPULATED (every printing is listed)
-    or BAREBONES (only the printings the user chose to track)."""
+    """Spikes, drops and price history for tracked printings. mode is POPULATED (starts
+    with every printing tracked, and tracks new ones as they come out) or BAREBONES
+    (starts empty). Either way the user can track or remove printings at any time."""
 
     def __init__(self, mode, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -308,6 +324,13 @@ class FinanceWindow(QWidget):
         self.model = WatchlistModel(self)
         self.table = _table(self.model)
         self.table.selectionModel().selectionChanged.connect(self.show_selected)
+        # Delete key and right-click work like the collection table
+        remove_action = QAction("Remove", self.table, shortcut=QKeySequence.StandardKey.Delete)
+        remove_action.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        remove_action.triggered.connect(self.remove_selected)
+        self.table.addAction(remove_action)
+        self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.table.customContextMenuRequested.connect(self.show_context_menu)
 
         self.card_image = CardImage()
         self.detail_name = QLabel()
@@ -325,7 +348,7 @@ class FinanceWindow(QWidget):
         splitter.addWidget(detail)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([900, 380])
+        splitter.setSizes([960, 320])
 
         self.status_label = QLabel()
         self.status_label.setStyleSheet("color: gray;")
@@ -333,7 +356,11 @@ class FinanceWindow(QWidget):
         self.progress_bar.setMaximumWidth(240)
         self.progress_bar.hide()
         self.track_button = QPushButton("Track Cards…")
-        self.track_button.clicked.connect(self.track_cards)
+        self.track_button.setToolTip("Add cards, printings, finishes or whole sets")
+        self.track_button.clicked.connect(lambda: self.track_cards())
+        self.remove_button = QPushButton("Remove Selected")
+        self.remove_button.setToolTip("Stop tracking the selected printings (or press Delete, or right-click)")
+        self.remove_button.clicked.connect(self.remove_selected)
         self.refresh_button = QPushButton("Refresh Prices")
         self.refresh_button.clicked.connect(self.refresh)
         mode_button = QPushButton("Tracking Mode…")
@@ -341,7 +368,7 @@ class FinanceWindow(QWidget):
         buttons = QHBoxLayout()
         buttons.addWidget(self.status_label, stretch=1)
         buttons.addWidget(self.progress_bar)
-        for button in (mode_button, self.refresh_button, self.track_button):
+        for button in (mode_button, self.refresh_button, self.remove_button, self.track_button):
             buttons.addWidget(button)
 
         layout = QVBoxLayout(self)
@@ -357,7 +384,10 @@ class FinanceWindow(QWidget):
     def set_mode(self, mode):
         self.mode = mode
         self.settings.setValue("finance_mode", mode)
-        self.track_button.setVisible(mode == BAREBONES)
+        # Track Every Card starts with everything tracked; after that, removals stick
+        if mode == POPULATED and not self.settings.value("finance_all_tracked"):
+            db.track_all()
+            self.settings.setValue("finance_all_tracked", True)
         # Every card includes thousands of penny cards; start past them
         self.min_price.setValue(0.0 if mode == BAREBONES else 1.0)
         self.load()
@@ -373,6 +403,7 @@ class FinanceWindow(QWidget):
             if answer != QMessageBox.StandardButton.Yes:
                 return
             db.untrack_all()
+            self.settings.remove("finance_all_tracked")
         self.set_mode(mode)
 
     # Table
@@ -381,7 +412,7 @@ class FinanceWindow(QWidget):
         return dict(trends.PERIODS)[self.period_combo.currentText()]
 
     def load(self):
-        self.model.set_rows(db.get_watchlist(self.period_days(), tracked_only=self.mode == BAREBONES))
+        self.model.set_rows(db.get_watchlist(self.period_days(), tracked_only=True))
         self.on_show_changed(self.show_combo.currentText())
 
     def apply_filter(self):
@@ -406,9 +437,8 @@ class FinanceWindow(QWidget):
             return
         if message is None:
             total, shown = len(self.model.all_rows), self.model.rowCount()
-            message = (f"Showing {shown:,} of {total:,} printings. Prices update once a day."
-                       if total or self.mode == POPULATED
-                       else "Nothing tracked yet. Use Track Cards… to pick cards, printings or sets.")
+            message = (f"Showing {shown:,} of {total:,} tracked printings. Prices update once a day."
+                       if total else "Nothing tracked yet. Use Track Cards… to pick cards, printings or sets.")
         self.status_label.setText(message)
 
     def selected_rows(self):
@@ -436,15 +466,57 @@ class FinanceWindow(QWidget):
 
     # Tracking
 
-    def track_cards(self):
+    def track_cards(self, text=""):
         untracked = [row for row in db.get_watchlist(self.period_days()) if not row["tracked"]]
-        dialog = TrackDialog(untracked, self)
+        dialog = TrackDialog(untracked, text, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
         keys = dialog.keys()
         db.track(keys)
         self.load()
-        self.update_status(f"Now tracking {len(keys):,} more printing{'s' if len(keys) != 1 else ''}.")
+        self.update_status(f"Now tracking {_printings(len(keys))} more.")
+
+    def show_context_menu(self, position):
+        # Right-clicking a row that isn't part of the selection selects just that row
+        index = self.table.indexAt(position)
+        if not index.isValid():
+            return
+        if not self.table.selectionModel().isRowSelected(index.row()):
+            self.table.selectRow(index.row())
+        count = len(self.selected_rows())
+        row = self.model.rows[index.row()][0]
+        menu = QMenu(self)
+        menu.addAction("Remove" if count == 1 else f"Remove {_printings(count)}", self.remove_selected)
+        menu.addAction(f"Remove every card from {row['set_name']}", lambda: self.remove_set(row["set_code"]))
+        menu.addSeparator()
+        menu.addAction(f"Track other printings or finishes of {row['name']}…",
+                       lambda: self.track_cards(row["name"]))
+        menu.exec(QCursor.pos())
+
+    def remove_selected(self):
+        rows = self.selected_rows()
+        if len(rows) == 1:
+            finish = FINISH_LABELS[rows[0]["foil"]]
+            what = f"{rows[0]['name']} ({rows[0]['set_code']}{f', {finish.lower()}' if finish else ''})"
+        else:
+            what = _printings(len(rows))
+        self._untrack(rows, what)
+
+    def remove_set(self, set_code):
+        rows = [row for row, _ in self.model.all_rows if row["set_code"] == set_code]
+        self._untrack(rows, f"all {_printings(len(rows))} from {rows[0]['set_name']}" if rows else "")
+
+    def _untrack(self, rows, what):
+        if not rows:
+            return
+        answer = QMessageBox.question(
+            self, "Remove", f"Stop tracking {what}?\n\n"
+            "Price history is kept, and you can add them back with Track Cards…")
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        db.untrack((row["scryfall_id"], row["foil"]) for row in rows)
+        self.load()
+        self.update_status(f"Stopped tracking {_printings(len(rows))}.")
 
     # Updating prices
 
@@ -456,7 +528,7 @@ class FinanceWindow(QWidget):
             button.setEnabled(False)
         self.status_label.setText("Checking for new prices…")
         background.run(update_market, self.settings.value("finance_bulk_updated"),
-                       self.settings.value("finance_backfilled"),
+                       self.settings.value("finance_backfilled"), self.mode == POPULATED,
                        on_success=self._on_updated, on_error=self._on_failed, on_progress=self._on_progress)
 
     def _on_progress(self, value):

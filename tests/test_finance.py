@@ -44,6 +44,16 @@ def test_tracking_survives_refreshes(temp_db):
     temp_db.track([("opt", 1)])
     temp_db.watch_cards(finance.watch_records(_card(usd_foil="4.00")))  # next day's bulk refresh
     assert [(r["foil"], r["price"]) for r in temp_db.get_watchlist(tracked_only=True)] == [(1, 4.0)]
+    temp_db.untrack([("opt", 1)])
+    assert temp_db.get_watchlist(tracked_only=True) == []
+
+
+def test_every_card_mode_tracks_new_printings_but_keeps_removals(temp_db):
+    temp_db.watch_cards(finance.watch_records(_card()), track_new=True)
+    temp_db.untrack([("opt", 0)])
+    temp_db.watch_cards(finance.watch_records(_card()) + finance.watch_records(_card(id="new")), track_new=True)
+    assert {(r["scryfall_id"], r["foil"]) for r in temp_db.get_watchlist(tracked_only=True)} == {
+        ("opt", 1), ("new", 0), ("new", 1)}
     temp_db.untrack_all()
     assert temp_db.get_watchlist(tracked_only=True) == []
 

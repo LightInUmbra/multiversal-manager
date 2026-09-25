@@ -97,7 +97,7 @@ def create_table():
             WHERE scryfall_id IS NOT NULL AND price_updated IS NOT NULL
         """)
         # Every paper printing and finish, for the Finance window (owned or not), with
-        # `tracked` marking the ones picked when it starts empty. Prices go into the same
+        # `tracked` marking the ones listed there. Prices go into the same
         # price_history as the collection's; foil there is 0 non-foil, 1 foil, 2 etched.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS watchlist (
@@ -278,25 +278,25 @@ def get_past_prices(days=None):
 
 # Watchlist (Finance window)
 
-def watch_cards(records):
+def watch_cards(records, track_new=False):
     """Adds printings to the watchlist or refreshes the ones already there (keeping
-    whether they're tracked). records are dicts with scryfall_id, foil, name, set_code,
-    set_name, collector_number, rarity, image_url and price (None when Scryfall has
-    none). Returns how many were written."""
+    whether they're tracked; new ones are tracked if track_new). records are dicts with
+    scryfall_id, foil, name, set_code, set_name, collector_number, rarity, image_url and
+    price (None when Scryfall has none). Returns how many were written."""
     stamp, today = _now(), _today()
     with _connect() as conn:
         for r in records:
             conn.execute("""
                 INSERT INTO watchlist (scryfall_id, foil, name, set_code, set_name, collector_number,
-                                       rarity, image_url, price, price_updated)
+                                       rarity, image_url, price, price_updated, tracked)
                 VALUES (:scryfall_id, :foil, :name, :set_code, :set_name, :collector_number,
-                        :rarity, :image_url, :price, :stamp)
+                        :rarity, :image_url, :price, :stamp, :tracked)
                 ON CONFLICT (scryfall_id, foil) DO UPDATE SET name = excluded.name,
                     set_code = excluded.set_code, set_name = excluded.set_name,
                     collector_number = excluded.collector_number, rarity = excluded.rarity,
                     image_url = excluded.image_url, price = excluded.price,
                     price_updated = excluded.price_updated
-            """, {**r, "foil": int(r["foil"]), "stamp": stamp})
+            """, {**r, "foil": int(r["foil"]), "stamp": stamp, "tracked": int(track_new)})
             # Only store a point when the price moved: tracking every card means ~150k
             # printings a day, and "latest on or before a day" lookups work on sparse history
             if r["price"]:
@@ -326,16 +326,24 @@ def get_watchlist(days=None, tracked_only=False):
         """, params).fetchall()
 
 
-def track(keys):
-    # keys: iterable of (scryfall_id, foil)
+def track(keys, tracked=True):
+    # keys: iterable of (scryfall_id, foil). Untracking keeps the printing's price history.
     with _connect() as conn:
-        conn.executemany("UPDATE watchlist SET tracked = 1 WHERE scryfall_id = ? AND foil = ?",
-                         [(sid, int(foil)) for sid, foil in keys])
+        conn.executemany("UPDATE watchlist SET tracked = ? WHERE scryfall_id = ? AND foil = ?",
+                         [(int(tracked), sid, int(foil)) for sid, foil in keys])
+
+
+def untrack(keys):
+    track(keys, tracked=False)
+
+
+def track_all(tracked=True):
+    with _connect() as conn:
+        conn.execute("UPDATE watchlist SET tracked = ?", (int(tracked),))
 
 
 def untrack_all():
-    with _connect() as conn:
-        conn.execute("UPDATE watchlist SET tracked = 0")
+    track_all(tracked=False)
 
 
 def add_price_history(points, batch=100_000):
