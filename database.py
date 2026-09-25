@@ -96,8 +96,9 @@ def create_table():
             SELECT scryfall_id, foil, DATE(price_updated, 'localtime'), price FROM collection
             WHERE scryfall_id IS NOT NULL AND price_updated IS NOT NULL
         """)
-        # Printings followed in the Finance window, whether owned or not. Their prices
-        # go into the same price_history as the collection's.
+        # Every paper printing and finish, for the Finance window (owned or not), with
+        # `tracked` marking the ones picked when it starts empty. Prices go into the same
+        # price_history as the collection's; foil there is 0 non-foil, 1 foil, 2 etched.
         conn.execute("""
             CREATE TABLE IF NOT EXISTS watchlist (
                 scryfall_id TEXT NOT NULL,
@@ -110,9 +111,14 @@ def create_table():
                 image_url TEXT,
                 price REAL,
                 price_updated TEXT,
+                tracked INTEGER NOT NULL DEFAULT 0,
                 PRIMARY KEY (scryfall_id, foil)
             )
         """)
+        if "tracked" not in {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}:
+            # Before the full card list, the watchlist held only what was tracked
+            conn.execute("ALTER TABLE watchlist ADD COLUMN tracked INTEGER NOT NULL DEFAULT 0")
+            conn.execute("UPDATE watchlist SET tracked = 1")
 
 
 def _add(conn, name, set_name, price, quantity, *, scryfall_id=None, set_code=None,
@@ -273,9 +279,10 @@ def get_past_prices(days=None):
 # Watchlist (Finance window)
 
 def watch_cards(records):
-    """Adds printings to the watchlist or refreshes the ones already there. records are
-    dicts with scryfall_id, foil, name, set_code, set_name, collector_number, rarity,
-    image_url and price (None when Scryfall has none). Returns how many were written."""
+    """Adds printings to the watchlist or refreshes the ones already there (keeping
+    whether they're tracked). records are dicts with scryfall_id, foil, name, set_code,
+    set_name, collector_number, rarity, image_url and price (None when Scryfall has
+    none). Returns how many were written."""
     stamp, today = _now(), _today()
     with _connect() as conn:
         for r in records:
@@ -304,9 +311,9 @@ def watch_cards(records):
         return len(records)
 
 
-def get_watchlist(days=None):
-    # Every watched printing plus its price `days` days ago as "past" (None if no history
-    # that old), with the same lookup rules as get_past_prices
+def get_watchlist(days=None, tracked_only=False):
+    # Watched printings plus each one's price `days` days ago as "past" (None if no
+    # history that old), with the same lookup rules as get_past_prices
     lookup, params = _past_lookup(days)
     with _connect() as conn:
         return conn.execute(f"""
@@ -314,20 +321,43 @@ def get_watchlist(days=None):
                 SELECT h.price FROM price_history h
                 WHERE h.scryfall_id = w.scryfall_id AND h.foil = w.foil {lookup}
             ) AS past
-            FROM watchlist w ORDER BY w.name COLLATE NOCASE
+            FROM watchlist w {"WHERE w.tracked" if tracked_only else ""}
+            ORDER BY w.name COLLATE NOCASE
         """, params).fetchall()
 
 
-def unwatch(keys):
+def track(keys):
     # keys: iterable of (scryfall_id, foil)
     with _connect() as conn:
-        conn.executemany("DELETE FROM watchlist WHERE scryfall_id = ? AND foil = ?",
+        conn.executemany("UPDATE watchlist SET tracked = 1 WHERE scryfall_id = ? AND foil = ?",
                          [(sid, int(foil)) for sid, foil in keys])
 
 
-def clear_watchlist():
+def untrack_all():
     with _connect() as conn:
-        conn.execute("DELETE FROM watchlist")
+        conn.execute("UPDATE watchlist SET tracked = 0")
+
+
+def add_price_history(points, batch=100_000):
+    """Stores past prices, e.g. from MTGJSON: points is an iterable of (scryfall_id,
+    foil, day, price). Days that already have a price keep it. Written in batches, so
+    the collection window isn't locked out of the database for the whole import.
+    Returns how many points were read."""
+    count, rows = 0, []
+    for point in points:
+        rows.append(point)
+        count += 1
+        if len(rows) >= batch:
+            _insert_history(rows)
+            rows = []
+    _insert_history(rows)
+    return count
+
+
+def _insert_history(rows):
+    with _connect() as conn:
+        conn.executemany("INSERT OR IGNORE INTO price_history (scryfall_id, foil, day, price) "
+                         "VALUES (?, ?, ?, ?)", rows)
 
 
 def remove_card(card_id):

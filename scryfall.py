@@ -170,17 +170,17 @@ def bulk_info(kind="default-cards"):
     return _get_json(f"/bulk-data/{kind}")
 
 
-def iter_bulk_cards(info, progress=None):
-    # Streams a bulk file one Card at a time -- it's gzipped JSON lines, so the whole
-    # ~500 MB of card data never sits in memory. progress((done, total)) is called with
-    # compressed bytes read every few thousand cards.
+def iter_bulk_data(info, progress=None):
+    # Streams a bulk file one raw card dict at a time -- it's gzipped JSON lines, so the
+    # whole ~500 MB of card data never sits in memory. Raw dicts rather than Cards, since
+    # Card has no etched price. progress((done, total)) gets compressed bytes read now and then.
     with requests.get(info["jsonl_download_uri"], headers={"User-Agent": HEADERS["User-Agent"]},
                       timeout=TIMEOUT, stream=True) as response:
         response.raise_for_status()
         with gzip.open(response.raw, "rt", encoding="utf-8") as lines:
             for count, line in enumerate(lines):
                 if line.strip():
-                    yield Card(json.loads(line))
+                    yield json.loads(line)
                 if progress and count % 5000 == 0:
                     progress((response.raw.tell(), info["compressed_size"]))
 

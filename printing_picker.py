@@ -160,9 +160,6 @@ class PrintingPicker(QWidget):
         index = self.printing_combo.currentIndex()
         return self._printings[index] if 0 <= index < len(self._printings) else None
 
-    def printings(self):
-        return list(self._printings)
-
     def is_foil(self):
         return self.foil_check.isChecked()
 

@@ -8,7 +8,7 @@ A desktop app for tracking a Magic: The Gathering card collection: what you own,
 - **Card images**: see a full card preview while adding and when selecting a card in your collection. Images are cached locally after the first load.
 - **Collection value**: a running total of your collection's value, plus total and unique card counts.
 - **Price history and trends**: every Scryfall price is recorded once a day per printing and finish. A *Change* column shows how each card has moved over 24 hours, 7, 30 or 90 days, or all time, and the summary shows the whole collection's movement. Selecting a card charts its price history. *Trends…* (Ctrl+T) charts the collection's value over time and lists the biggest gainers and losers. Changes count price movement only, so adding or removing cards doesn't show up as a gain or loss.
-- **Finance** (Ctrl+Shift+F): a market view in the style of MTGStocks, showing the biggest price spikes and drops over 24 hours to all time, with a minimum-price filter and a price chart for each printing. The first time you open it, you choose to start empty and track only the cards, printings and sets you add, or to track every paper printing in Magic from Scryfall's daily bulk data (an ~80 MB download, refreshed once a day while the window is open). Scryfall updates prices once a day, so that's how often movement shows up.
+- **Finance** (Ctrl+Shift+F): a market view in the style of MTGStocks, showing the biggest price spikes and drops over 24 hours to all time for every printing and finish (non-foil, foil, etched), with a minimum-price filter and a price chart for each. The first open downloads every paper printing from Scryfall's bulk data (~80 MB) and 90 days of price history from MTGJSON (~60 MB, re-checked weekly). *Track Every Card* lists all of them. *Start Empty* lists only what you pick with *Track Cards…*: filter by card, set name or set code, then track single printings or everything shown. Prices update once a day, as often as Scryfall publishes them, and history keeps building from there. Expect the database to grow to a few hundred MB.
 - **Price refresh**: prices older than 24 hours update automatically on startup, or on demand with *Refresh Prices*. Foil and non-foil copies are priced separately.
 - **Editing**: right-click or double-click a card (or use *Edit…*) to change its printing, finish, quantity or price. Double-click a quantity to change just that. Adding a printing you already own increases its quantity instead of creating a duplicate row.
 - **Filter and sort**: filter by name, set or artist, and sort by any column.
@@ -55,7 +55,8 @@ multiversal-manager/
     import_review_dialog.py  # Review imported entries and choose printings
     card_image.py         # Card image widget (async loading, never crops the card)
     charts.py             # Price / value history line charts (QtCharts)
-    finance.py            # Finance window: tracked printings, spikes and drops, bulk price download
+    finance.py            # Finance window: spikes and drops, tracking, daily price updates
+    mtgjson.py            # 90-day price history backfill from MTGJSON
     trends.py             # Price change calculations and the Trends window
     importer.py           # Parses CSV / text card lists and matches them on Scryfall
     scryfall.py           # Adapter over ScryFunctions + autocomplete, prices, images

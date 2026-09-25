@@ -1,26 +1,28 @@
 """
 Finance window: follow card prices like a stock ticker (think MTGStocks) --
-biggest spikes and drops over a period, for cards you pick or for every card.
+biggest spikes and drops over a period, across every card or just the ones you pick.
+
+Both modes keep the full list of paper printings (from Scryfall's daily bulk data)
+and 90 days of back history (from MTGJSON); the mode only decides what's listed.
 """
 
 # Imports
-from datetime import date
+from datetime import date, timedelta
 
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QSettings, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QComboBox, QDoubleSpinBox, QTableView,
-    QHeaderView, QAbstractItemView, QPushButton, QSplitter, QMessageBox, QDialog, QProgressDialog,
-    QInputDialog,
+    QHeaderView, QAbstractItemView, QPushButton, QSplitter, QMessageBox, QDialog, QDialogButtonBox,
+    QProgressBar,
 )
 
 import background
 import database as db
+import mtgjson
 import scryfall
 import trends
-from add_card_dialog import CardDialog
 from card_image import CardImage
 from charts import HistoryChart
-from Functions import ScryFunctions as sf  # importable once scryfall has set up sys.path
 
 BAREBONES, POPULATED = "barebones", "populated"
 
@@ -28,29 +30,35 @@ COLUMNS = ["Card", "Set", "#", "Finish", "Rarity", "Price", "Change", "Change %"
 (NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, RARITY_COL, PRICE_COL, CHANGE_COL,
  PERCENT_COL) = range(len(COLUMNS))
 
-SHOW_SPIKES, SHOW_DROPS, SHOW_ALL = "Biggest spikes", "Biggest drops", "Everything tracked"
+SHOW_SPIKES, SHOW_DROPS, SHOW_ALL = "Biggest spikes", "Biggest drops", "Everything"
+
+# Scryfall finish -> (foil code stored with prices, Scryfall price key)
+FINISHES = {"nonfoil": (0, "usd"), "foil": (1, "usd_foil"), "etched": (2, "usd_etched")}
+FINISH_LABELS = {0: "", 1: "Foil", 2: "Etched"}
+
+# MTGJSON's history is re-read this often, filling in days the app wasn't opened
+BACKFILL_EVERY = timedelta(days=7)
 
 
 def _settings():
     return QSettings("Multiversal Manager", "Multiversal Manager")
 
 
-def watch_records(card, foil=None):
-    # Watchlist records for a Scryfall printing: just `foil`'s finish, or every
-    # finish it exists in when foil is None. ponytail: etched finishes are skipped,
-    # the shared Card class has no usd_etched price yet.
-    finishes = [f for f in (False, True) if ("foil" if f else "nonfoil") in card.finishes]
+def watch_records(data):
+    # Watchlist records for a raw Scryfall card dict, one per finish it's printed in
+    prices = data.get("prices") or {}
+    card = scryfall.Card(data)
     return [{
         "scryfall_id": card.id,
-        "foil": f,
+        "foil": code,
         "name": card.name,
         "set_code": card.set,
         "set_name": card.set_name,
         "collector_number": card.collector_number,
         "rarity": card.rarity,
         "image_url": scryfall.image_url_for(card),
-        "price": scryfall.price_for(card, f) or None,
-    } for f in (finishes if foil is None else [foil])]
+        "price": float(prices[key]) if prices.get(key) else None,
+    } for finish, (code, key) in FINISHES.items() if finish in card.finishes]
 
 
 def change_for(row):
@@ -61,33 +69,34 @@ def change_for(row):
     return each, each / row["past"] * 100
 
 
-# Background work (runs on worker threads)
+def backfill_due(last_backfill, today=None):
+    today = today or date.today()
+    return not last_backfill or date.fromisoformat(last_backfill) + BACKFILL_EVERY <= today
 
-def _track_everything(last_updated, progress=None):
-    # Downloads Scryfall's daily bulk file and tracks every paper printing. Returns
-    # (bulk updated_at, printings written), or None when there's nothing newer.
+
+# Background work (runs on a worker thread)
+
+def update_market(last_bulk, last_backfill, progress=None):
+    """Brings the card list and prices up to date: Scryfall's bulk file when it has a
+    newer one, and MTGJSON's 90 days of history when a backfill is due. Returns
+    {"bulk": updated_at, "backfill": day} for the steps that ran."""
+    done = {}
+
+    def step(label):
+        return (lambda value: progress((label, *value))) if progress else None
+
     info = scryfall.bulk_info()
-    if info is None or info["updated_at"] == last_updated:
-        return None
-    records = []
-    for card in scryfall.iter_bulk_cards(info, progress):
-        if not card.digital:
-            records.extend(watch_records(card))
-    return info["updated_at"], db.watch_cards(records)
-
-
-def _refresh_watched(keys):
-    # Refreshes the given (scryfall_id, foil) printings from Scryfall
-    cards = scryfall.get_cards_by_id([sid for sid, _ in keys])
-    return db.watch_cards([r for sid, foil in keys if sid in cards
-                           for r in watch_records(cards[sid], bool(foil))])
-
-
-def _track_set(code):
-    cards = sf.search_cards_by_set(code)
-    if not cards:
-        raise LookupError(f"Scryfall has no set with the code {code.upper()}.")
-    return db.watch_cards([r for card in cards if not card.digital for r in watch_records(card)])
+    if info is not None and info["updated_at"] != last_bulk:
+        records = []
+        for data in scryfall.iter_bulk_data(info, step("Downloading every card's price from Scryfall…")):
+            if not data.get("digital"):
+                records.extend(watch_records(data))
+        db.watch_cards(records)
+        done["bulk"] = info["updated_at"]
+    if backfill_due(last_backfill):
+        db.add_price_history(mtgjson.price_history(step("Downloading 90 days of price history from MTGJSON…")))
+        done["backfill"] = date.today().isoformat()
+    return done
 
 
 def ask_mode(parent):
@@ -95,24 +104,26 @@ def ask_mode(parent):
     box = QMessageBox(QMessageBox.Icon.Question, "Finance", "What should the Finance window track?",
                       parent=parent)
     box.setInformativeText(
-        "<b>Start empty</b>: nothing is tracked until you add the cards, printings or sets you "
-        "care about.<br><br>"
-        "<b>Every card</b>: tracks every paper printing in Magic (about 100,000, foil and non-foil) "
-        "so you can watch the whole market. Downloads Scryfall's card data (about 80 MB) once a day "
-        "while the window is open, and the database grows as price history builds up.<br><br>"
-        "Scryfall updates prices once a day. You can change this later with Tracking Mode."
+        "<b>Track every card</b>: every paper printing and finish in Magic (about 160,000) is "
+        "listed and tracked, so you can watch the whole market.<br><br>"
+        "<b>Start empty</b>: the same card database is loaded, but nothing is listed until you "
+        "pick the cards, printings, sets or finishes you want to follow.<br><br>"
+        "Either way, the first open downloads Scryfall's card data (about 80 MB) and 90 days of "
+        "price history from MTGJSON (about 60 MB). That takes a few minutes and adds a few "
+        "hundred MB to the database. After that, prices update once a day, as often as Scryfall "
+        "publishes them. You can switch modes later with Tracking Mode…"
     )
-    empty = box.addButton("Start Empty", QMessageBox.ButtonRole.AcceptRole)
     everything = box.addButton("Track Every Card", QMessageBox.ButtonRole.AcceptRole)
+    empty = box.addButton("Start Empty", QMessageBox.ButtonRole.AcceptRole)
     box.addButton(QMessageBox.StandardButton.Cancel)
     box.exec()
     return {empty: BAREBONES, everything: POPULATED}.get(box.clickedButton())
 
 
 class WatchlistModel(QAbstractTableModel):
-    """Every tracked printing, filtered and sorted in plain Python. Tracking every card
-    means ~160k rows, and Qt's proxy models call back into Python millions of times
-    to sort that many (half a minute); sorted() with a key takes a fraction of a second."""
+    """Printings, filtered and sorted in plain Python. Every card means ~160k rows,
+    and Qt's proxy models call back into Python millions of times to sort that
+    many (half a minute); sorted() with a key takes a fraction of a second."""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -186,19 +197,75 @@ class WatchlistModel(QAbstractTableModel):
             if column == PERCENT_COL:
                 return f"{'+' if change[1] >= 0 else '−'}{abs(change[1]):.1f}%" if change else ""
             return [row["name"], f"{row['set_name']} ({row['set_code']})", row["collector_number"],
-                    "Foil" if row["foil"] else "", (row["rarity"] or "").capitalize()][column]
+                    FINISH_LABELS[row["foil"]], (row["rarity"] or "").capitalize()][column]
         if role == Qt.ItemDataRole.ForegroundRole and column >= CHANGE_COL and change:
             return trends.change_color(change[0])
         if role == Qt.ItemDataRole.TextAlignmentRole and column >= PRICE_COL:
             return Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter
         if role == Qt.ItemDataRole.ToolTipRole and column >= CHANGE_COL:
-            return f"${row['past']:,.2f} → ${row['price']:,.2f}" if change else "No price recorded that far back yet"
+            return f"${row['past']:,.2f} → ${row['price']:,.2f}" if change else "No price recorded that far back"
         return None
 
 
+def _table(model):
+    table = QTableView()
+    table.setModel(model)
+    table.setSortingEnabled(True)
+    table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+    table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+    table.setAlternatingRowColors(True)
+    table.verticalHeader().setVisible(False)
+    header = table.horizontalHeader()
+    header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
+    header.resizeSection(SET_COL, 260)
+    return table
+
+
+class TrackDialog(QDialog):
+    """Pick printings to track from the local card list: filter by card or set, then
+    track the selected rows or everything shown (every printing of a card, a whole set…)."""
+
+    def __init__(self, rows, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Track Cards")
+        self.resize(1000, 640)
+        self.model = WatchlistModel(self)
+        self.model.set_rows(rows)
+
+        self.filter_input = QLineEdit()
+        self.filter_input.setPlaceholderText("Card name, set name or set code…")
+        self.filter_input.setClearButtonEnabled(True)
+        timer = QTimer(self, singleShot=True, interval=250)
+        timer.timeout.connect(lambda: self.model.set_filter(self.filter_input.text(), 0.0, SHOW_ALL))
+        self.filter_input.textChanged.connect(lambda _: timer.start())
+        self.table = _table(self.model)
+        self.table.doubleClicked.connect(self.accept)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        buttons.addButton("Track Selected", QDialogButtonBox.ButtonRole.AcceptRole)
+        track_all = buttons.addButton("Track All Shown", QDialogButtonBox.ButtonRole.ActionRole)
+        track_all.clicked.connect(self.track_all_shown)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.filter_input)
+        layout.addWidget(self.table)
+        layout.addWidget(buttons)
+
+    def track_all_shown(self):
+        self.table.selectAll()
+        self.accept()
+
+    def keys(self):
+        # (scryfall_id, foil) of the chosen printings
+        rows = {index.row() for index in self.table.selectionModel().selectedRows()}
+        return [(self.model.rows[r][0]["scryfall_id"], self.model.rows[r][0]["foil"]) for r in rows]
+
+
 class FinanceWindow(QWidget):
-    """Spikes, drops and price history for tracked printings. mode is BAREBONES
-    (the user picks what to track) or POPULATED (every card, from Scryfall's bulk data)."""
+    """Spikes, drops and price history. mode is POPULATED (every printing is listed)
+    or BAREBONES (only the printings the user chose to track)."""
 
     def __init__(self, mode, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -206,12 +273,11 @@ class FinanceWindow(QWidget):
         self.resize(1280, 760)
         self.settings = _settings()
         self._busy = False
-        self._progress = None
 
         self.filter_input = QLineEdit()
         self.filter_input.setPlaceholderText("Filter by card or set…")
         self.filter_input.setClearButtonEnabled(True)
-        # Filtering ~150k rows takes a moment, so wait for a pause in typing
+        # Filtering ~160k rows takes a moment, so wait for a pause in typing
         self._filter_timer = QTimer(self, singleShot=True, interval=250)
         self._filter_timer.timeout.connect(self.apply_filter)
         self.filter_input.textChanged.connect(lambda _: self._filter_timer.start())
@@ -240,16 +306,7 @@ class FinanceWindow(QWidget):
         top.addWidget(self.min_price)
 
         self.model = WatchlistModel(self)
-        self.table = QTableView()
-        self.table.setModel(self.model)
-        self.table.setSortingEnabled(True)
-        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
-        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.table.setAlternatingRowColors(True)
-        self.table.verticalHeader().setVisible(False)
-        header = self.table.horizontalHeader()
-        header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
-        header.resizeSection(SET_COL, 260)
+        self.table = _table(self.model)
         self.table.selectionModel().selectionChanged.connect(self.show_selected)
 
         self.card_image = CardImage()
@@ -272,20 +329,19 @@ class FinanceWindow(QWidget):
 
         self.status_label = QLabel()
         self.status_label.setStyleSheet("color: gray;")
-        self.track_button = QPushButton("Track Card…")
-        self.track_button.clicked.connect(self.track_card)
-        self.track_set_button = QPushButton("Track Set…")
-        self.track_set_button.clicked.connect(self.track_set)
-        self.remove_button = QPushButton("Stop Tracking")
-        self.remove_button.clicked.connect(self.remove_selected)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setMaximumWidth(240)
+        self.progress_bar.hide()
+        self.track_button = QPushButton("Track Cards…")
+        self.track_button.clicked.connect(self.track_cards)
         self.refresh_button = QPushButton("Refresh Prices")
-        self.refresh_button.clicked.connect(lambda: self.refresh(force=True))
+        self.refresh_button.clicked.connect(self.refresh)
         mode_button = QPushButton("Tracking Mode…")
         mode_button.clicked.connect(self.change_mode)
         buttons = QHBoxLayout()
         buttons.addWidget(self.status_label, stretch=1)
-        for button in (mode_button, self.refresh_button, self.remove_button, self.track_set_button,
-                       self.track_button):
+        buttons.addWidget(self.progress_bar)
+        for button in (mode_button, self.refresh_button, self.track_button):
             buttons.addWidget(button)
 
         layout = QVBoxLayout(self)
@@ -294,21 +350,17 @@ class FinanceWindow(QWidget):
         layout.addLayout(buttons)
 
         self.set_mode(mode)
+        self.refresh()
 
     # Mode
 
     def set_mode(self, mode):
         self.mode = mode
         self.settings.setValue("finance_mode", mode)
-        barebones = mode == BAREBONES
-        for button in (self.track_button, self.track_set_button, self.remove_button):
-            button.setVisible(barebones)
+        self.track_button.setVisible(mode == BAREBONES)
         # Every card includes thousands of penny cards; start past them
-        self.min_price.setValue(0.0 if barebones else 1.0)
+        self.min_price.setValue(0.0 if mode == BAREBONES else 1.0)
         self.load()
-        if barebones and not self.model.all_rows:
-            self.show_combo.setCurrentText(SHOW_ALL)
-        self.refresh()
 
     def change_mode(self):
         mode = ask_mode(self)
@@ -316,12 +368,11 @@ class FinanceWindow(QWidget):
             return
         if mode == BAREBONES:
             answer = QMessageBox.question(
-                self, "Finance", "Stop tracking every card and start with an empty list?\n\n"
-                "Price history already recorded is kept.")
+                self, "Finance", "Start with an empty list? Cards you track from now on are listed "
+                "here; the card database and price history are kept.")
             if answer != QMessageBox.StandardButton.Yes:
                 return
-            db.clear_watchlist()
-        self.settings.remove("finance_bulk_updated")
+            db.untrack_all()
         self.set_mode(mode)
 
     # Table
@@ -330,7 +381,7 @@ class FinanceWindow(QWidget):
         return dict(trends.PERIODS)[self.period_combo.currentText()]
 
     def load(self):
-        self.model.set_rows(db.get_watchlist(self.period_days()))
+        self.model.set_rows(db.get_watchlist(self.period_days(), tracked_only=self.mode == BAREBONES))
         self.on_show_changed(self.show_combo.currentText())
 
     def apply_filter(self):
@@ -350,11 +401,14 @@ class FinanceWindow(QWidget):
         self.load()
 
     def update_status(self, message=None):
-        total, shown = len(self.model.all_rows), self.model.rowCount()
+        # While prices are downloading the status line shows progress instead
+        if message is None and self._busy:
+            return
         if message is None:
-            message = (f"Showing {shown:,} of {total:,} tracked printings. Scryfall updates prices once a day."
+            total, shown = len(self.model.all_rows), self.model.rowCount()
+            message = (f"Showing {shown:,} of {total:,} printings. Prices update once a day."
                        if total or self.mode == POPULATED
-                       else "Nothing tracked yet. Use Track Card… or Track Set… to add some.")
+                       else "Nothing tracked yet. Use Track Cards… to pick cards, printings or sets.")
         self.status_label.setText(message)
 
     def selected_rows(self):
@@ -368,91 +422,66 @@ class FinanceWindow(QWidget):
             self.price_chart.show_message("")
             return
         row = rows[0]
+        finish = FINISH_LABELS[row["foil"]]
         self.card_image.set_image_url(row["image_url"])
-        self.detail_name.setText(f"{row['name']}{'  ✦ Foil' if row['foil'] else ''}\n"
+        self.detail_name.setText(f"{row['name']}{f'  ✦ {finish}' if finish else ''}\n"
                                  f"{row['set_name']} ({row['set_code']}) #{row['collector_number']}")
         history = db.get_price_history(row["scryfall_id"], row["foil"])
         # History only stores price changes, so carry the current price up to today
         today = date.today().isoformat()
         if row["price"] and (not history or history[-1][0] != today):
             history.append((today, row["price"]))
-        self.price_chart.set_points(history, "Scryfall has no price for this printing.")
+        self.price_chart.set_points(history, "No price for this printing.")
         self.price_chart.chart.setTitle("Price history")
 
     # Tracking
 
-    def track_card(self):
-        dialog = CardDialog(self, watch=True)
+    def track_cards(self):
+        untracked = [row for row in db.get_watchlist(self.period_days()) if not row["tracked"]]
+        dialog = TrackDialog(untracked, self)
         if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        picker = dialog.picker
-        if dialog.all_printings_check.isChecked():
-            records = [r for card in picker.printings() for r in watch_records(card)]
-        else:
-            records = watch_records(picker.selected_printing(), picker.is_foil())
-        db.watch_cards(records)
+        keys = dialog.keys()
+        db.track(keys)
         self.load()
-        self.update_status(f"Now tracking {len(records):,} more printing{'s' if len(records) != 1 else ''}.")
+        self.update_status(f"Now tracking {len(keys):,} more printing{'s' if len(keys) != 1 else ''}.")
 
-    def track_set(self):
-        code, ok = QInputDialog.getText(self, "Track Set", "Set code (e.g. BLB, MH3, LEA):")
-        if ok and code.strip():
-            self._start(f"Looking up set {code.strip().upper()}…", _track_set, code.strip())
+    # Updating prices
 
-    def remove_selected(self):
-        rows = self.selected_rows()
-        if rows:
-            db.unwatch((row["scryfall_id"], row["foil"]) for row in rows)
-            self.load()
-
-    # Refreshing prices
-
-    def refresh(self, force=False):
-        if self._busy:
-            return
-        if self.mode == POPULATED:
-            last = None if force else self.settings.value("finance_bulk_updated")
-            self._progress = QProgressDialog("Downloading every card's price from Scryfall…", None, 0, 100, self)
-            self._progress.setWindowTitle("Finance")
-            self._progress.setMinimumDuration(1500)
-            self._start("Checking Scryfall for new prices…", _track_everything, last, progress=True)
-            return
-        # Scryfall only updates once a day, so only prices from before today are refreshed
-        today = date.today().isoformat()
-        stale = [(row["scryfall_id"], row["foil"]) for row, _ in self.model.all_rows
-                 if force or not row["price_updated"] or row["price_updated"][:10] < today]
-        if stale:
-            self._start(f"Refreshing {len(stale):,} prices…", _refresh_watched, stale)
-
-    def _start(self, message, fn, *args, progress=False):
+    def refresh(self):
         if self._busy:
             return
         self._busy = True
-        self.refresh_button.setEnabled(False)
-        self.update_status(message)
-        background.run(fn, *args, on_success=self._on_done, on_error=self._on_failed,
-                       on_progress=self._on_progress if progress else None)
+        for button in (self.refresh_button, self.track_button):
+            button.setEnabled(False)
+        self.status_label.setText("Checking for new prices…")
+        background.run(update_market, self.settings.value("finance_bulk_updated"),
+                       self.settings.value("finance_backfilled"),
+                       on_success=self._on_updated, on_error=self._on_failed, on_progress=self._on_progress)
 
     def _on_progress(self, value):
-        done, total = value
-        if self._progress is not None:
-            self._progress.setValue(min(99, done * 100 // max(total, 1)))
+        label, done, total = value
+        self.status_label.setText(label)
+        self.progress_bar.show()
+        self.progress_bar.setValue(min(99, done * 100 // max(total, 1)))
 
     def _finish(self):
         self._busy = False
-        self.refresh_button.setEnabled(True)
-        if self._progress is not None:
-            self._progress.close()
-            self._progress = None
+        self.progress_bar.hide()
+        for button in (self.refresh_button, self.track_button):
+            button.setEnabled(True)
 
-    def _on_done(self, result):
+    def _on_updated(self, done):
         self._finish()
-        if isinstance(result, tuple):  # bulk download: (updated_at, printings written)
-            self.settings.setValue("finance_bulk_updated", result[0])
-        self.load()
-        if result is None:
-            self.update_status("Prices are already up to date. Scryfall updates them once a day.")
+        if "bulk" in done:
+            self.settings.setValue("finance_bulk_updated", done["bulk"])
+        if "backfill" in done:
+            self.settings.setValue("finance_backfilled", done["backfill"])
+        if done:
+            self.load()
+        else:
+            self.update_status("Prices are up to date. Scryfall publishes new ones once a day.")
 
     def _on_failed(self, message):
         self._finish()
-        self.update_status(f"Couldn't update from Scryfall: {message}")
+        self.update_status(f"Couldn't update prices: {message}")
