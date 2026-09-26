@@ -39,7 +39,7 @@ The card database (about 80 MB from Scryfall) downloads once and then refreshes 
 
 ### Finance
 
-Your window into the wider Magic market (Ctrl+Shift+F).
+Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 
 - **Spikes and drops --** The biggest movers over any time period, for every printing and finish (non-foil, foil, etched). A minimum-price filter keeps penny cards from cluttering things up.
 - **Two ways to start --** *Track Every Card* follows all ~160,000 paper printings and finishes and picks up new ones as they come out. *Start Empty* tracks nothing until you tell it to. Either way the full card database gets loaded, so switching later is instant.
