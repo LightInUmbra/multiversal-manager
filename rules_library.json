@@ -1,0 +1,181 @@
+{
+  "about": "Plain-English guides to the systems behind Magic interactions, and verified rulings for common and tricky interactions. Every rule number refers to the Comprehensive Rules. Shared by the desktop app, and later the website and mobile app.",
+  "concepts": [
+    {
+      "title": "Priority and the stack",
+      "summary": [
+        "Spells and most abilities don't happen right away: they go on the stack and wait. The stack resolves one object at a time, last in, first out, so the most recent spell or ability resolves first.",
+        "After anything is put on the stack, the active player gets priority first. Players pass priority in turn order. When every player passes in a row, the top object resolves, and the active player gets priority again. If everyone passes with the stack empty, the step or phase ends.",
+        "You can respond to anything on the stack. You can't respond to things that don't use the stack: playing a land, mana abilities, special actions like turning a face-down creature face up, or state-based actions. You can respond to abilities those trigger, though.",
+        "When a spell or ability tries to resolve, it checks its targets. If every target is now illegal, it doesn't resolve at all. If only some are illegal, it resolves and simply doesn't affect those."
+      ],
+      "rules": ["117.3", "117.4", "405.5", "116.2", "605.3a", "608.2b"]
+    },
+    {
+      "title": "APNAP order",
+      "summary": [
+        "APNAP stands for Active Player, NonActive Player. Whenever players would make choices or take actions at the same time, the active player (whose turn it is) goes first, then the other players in turn order.",
+        "Triggered abilities: when several trigger at once, the active player puts all of theirs on the stack first, in any order they like, then each other player does the same in turn order. Because the stack is last in, first out, the last player's triggers resolve first and the active player's resolve last.",
+        "Example: during your upkeep, your trigger and your opponent's trigger both happen. You put yours on the stack first, your opponent puts theirs on top, so your opponent's resolves first.",
+        "Simultaneous choices work the same way: for \"each player sacrifices a creature\", the active player chooses first, then each other player in turn order, and then all of them are sacrificed at once."
+      ],
+      "rules": ["101.4", "603.3b"]
+    },
+    {
+      "title": "Combat",
+      "summary": [
+        "Combat has five steps: beginning of combat, declare attackers, declare blockers, combat damage, end of combat.",
+        "A creature only becomes \"blocked\" or \"unblocked\" in the declare blockers step. Abilities that need an unblocked attacker, like ninjutsu, can only be used from that point on.",
+        "First strike and double strike: if any attacking or blocking creature has either at the start of the combat damage step, there are two damage steps. In the first, only creatures with first strike or double strike deal damage. In the second, creatures with double strike deal damage again, along with every creature that didn't deal first-strike damage, including creatures that joined the combat after the first step (such as a Ninja put in with ninjutsu).",
+        "All combat damage in a step is dealt at the same time, and lifelink's life gain happens at that same moment.",
+        "Trample: the attacker must assign lethal damage to its blockers before assigning the rest to the player. With deathtouch, 1 damage counts as lethal. Protection doesn't lower that lethal amount, even though the damage to the protected blocker will be prevented."
+      ],
+      "rules": ["506.1", "509.1h", "510.1", "510.2", "510.4", "702.19b", "702.2c", "702.15b"]
+    },
+    {
+      "title": "State-based actions",
+      "summary": [
+        "State-based actions are game checks that happen automatically whenever a player would receive priority. They don't use the stack, and nobody can respond to them.",
+        "Among them: a player with 0 or less life loses; a player with ten or more poison counters loses; a creature with 0 or less toughness is put into its owner's graveyard (this isn't destruction, so indestructible doesn't save it); a creature with lethal damage marked on it, or any damage from a deathtouch source, is destroyed (indestructible does save it); a planeswalker with 0 loyalty goes to the graveyard; an Aura attached to nothing goes to the graveyard; +1/+1 and -1/-1 counters on the same permanent cancel out in pairs.",
+        "Legend rule: if you control two or more legendary permanents with the same name, you choose one and the rest go to the graveyard. That's not sacrificing or destroying, so abilities that care about those don't trigger.",
+        "All the state-based actions that apply happen at the same time, then the game checks again, until none apply."
+      ],
+      "rules": ["704.3", "704.5a", "704.5c", "704.5f", "704.5g", "704.5h", "704.5i", "704.5j", "704.5m", "704.5q"]
+    },
+    {
+      "title": "Layers and continuous effects",
+      "summary": [
+        "When several continuous effects change a permanent, they're applied in a fixed order of layers, no matter when each effect started: 1 copy effects (and face-down status), 2 control, 3 text, 4 types, 5 color, 6 abilities being added or removed, 7 power and toughness.",
+        "Power and toughness (layer 7) has its own order: 7a characteristic-defining abilities (\"its power is equal to…\"), 7b effects that set power and toughness (\"becomes a 1/1\"), 7c effects and counters that modify them (+3/+3, anthems, +1/+1 counters), 7d effects that switch power and toughness.",
+        "Examples: a 2/2 under Glorious Anthem hit by Turn to Frog becomes a 1/1 (7b) and then gets +1/+1 (7c): a 2/2. A creature with Giant Growth that later becomes 1/1 is still 4/4, because the +3/+3 applies after the set. Under Humility, a creature with three +1/+1 counters is 4/4.",
+        "Within a layer, effects apply in timestamp order (oldest first), unless one depends on another. An effect depends on another if applying the other would change whether it exists, what it applies to, or what it does. Then the other one applies first. Example: Blood Moon removes Urborg, Tomb of Yawgmoth's ability, so Urborg's effect depends on Blood Moon's. Blood Moon applies first, Urborg loses its ability, and no lands become Swamps."
+      ],
+      "rules": ["613.1", "613.4", "613.7", "613.8", "613.8a"]
+    },
+    {
+      "title": "Replacement and prevention effects",
+      "summary": [
+        "Replacement effects change an event as it happens, rather than responding to it. You can spot them by words like \"instead\", \"skip\", \"enters with\" or \"as this enters\". They don't use the stack, and nobody can respond to them.",
+        "Prevention effects (\"prevent the next 3 damage\") are a kind of replacement effect for damage.",
+        "When several replacement or prevention effects would apply to the same event, the affected player, or the controller of the affected object, chooses one to apply, then checks whether the others still apply, and so on. Each effect can apply to a given event only once."
+      ],
+      "rules": ["614.1", "614.5", "615.1", "616.1"]
+    },
+    {
+      "title": "Triggered abilities",
+      "summary": [
+        "Triggered abilities start with \"When\", \"Whenever\" or \"At\". When their event happens they trigger, and they're put on the stack the next time a player would receive priority, after state-based actions are checked. Their controller chooses targets then.",
+        "Once on the stack, a triggered ability is independent of its source. Destroying the source doesn't stop it.",
+        "Leaves-the-battlefield triggers \"look back in time\": they see the game as it was just before the event. That's why Blood Artist triggers for every creature that dies at the same time it does.",
+        "\"When/Whenever X, if Y, …\" (an intervening \"if\" clause) checks Y both when it would trigger and again when it resolves."
+      ],
+      "rules": ["603.2", "603.3", "603.4", "603.10a", "113.7a"]
+    },
+    {
+      "title": "Zone changes and new objects",
+      "summary": [
+        "When a card moves from one zone to another, it becomes a brand-new object with no memory of where it was. That's why a flickered (exiled and returned) creature loses \"until end of turn\" effects, counters, damage and Auras, and why it has summoning sickness again.",
+        "A commander that dies goes to the graveyard first, so \"when a creature dies\" abilities trigger. Its owner may then move it to the command zone."
+      ],
+      "rules": ["400.7", "903.9a"]
+    },
+    {
+      "title": "Copies",
+      "summary": [
+        "A copy only gets the original's copiable values: its printed characteristics, as changed by other copy effects and a few \"as this enters\" choices. It doesn't copy counters, Auras or Equipment, stat boosts, other effects, or whether it's tapped.",
+        "A copy of a spell keeps the original's choices, like modes, targets (unless the effect lets you change them) and the value of X.",
+        "A copy of a permanent spell becomes a token as it resolves."
+      ],
+      "rules": ["707.2", "707.3", "707.10", "707.10f", "608.3f"]
+    },
+    {
+      "title": "Casting spells and costs",
+      "summary": [
+        "Casting a spell follows a fixed order: announce it, choose modes, choose X and other values, choose targets, work out the total cost, activate mana abilities, then pay.",
+        "Total cost is the mana cost (or an alternative cost) plus additional costs and cost increases, minus reductions. Commander tax is an additional {2} for each time that commander was previously cast from the command zone.",
+        "Timing: sorceries, creatures, artifacts, enchantments, planeswalkers and battles can only be cast in your main phase, while the stack is empty. Instants, and anything with flash, can be cast any time you have priority."
+      ],
+      "rules": ["601.2", "307.1", "903.8"]
+    },
+    {
+      "title": "Special actions and mana",
+      "summary": [
+        "Special actions don't use the stack and can't be responded to. They include playing a land, turning a face-down creature face up, and a few others. Abilities they trigger can be responded to.",
+        "Mana abilities resolve immediately and can't be responded to. You can activate them whenever you have priority, or while you're paying a cost.",
+        "Split second stops players from casting spells and activating abilities other than mana abilities while it's on the stack. Mana abilities and special actions are still allowed.",
+        "Unspent mana empties from your mana pool at the end of each step and phase. There's no mana burn: you don't lose life for it."
+      ],
+      "rules": ["116.2", "605.3a", "702.61b", "500.5"]
+    },
+    {
+      "title": "Summoning sickness",
+      "summary": [
+        "A creature can't attack, and can't use abilities with {T} or {Q} in their cost, unless you've controlled it continuously since your most recent turn began. This applies to creatures you just cast, gained control of, or flickered.",
+        "Haste removes this restriction. Abilities without {T} or {Q} in their cost can be used right away."
+      ],
+      "rules": ["302.6", "702.10"]
+    },
+    {
+      "title": "Commander",
+      "summary": [
+        "Decks have exactly 100 cards including the commander, with no duplicates except basic lands. Every card must fit the commander's color identity: the colors of all mana symbols in its mana cost and rules text (hybrid symbols count as both colors; reminder text doesn't count). Players start at 40 life.",
+        "Your commander starts in the command zone. Each time you cast it from there, it costs {2} more for each previous time.",
+        "If your commander goes to the graveyard or exile, you may move it to the command zone (it goes there first, so \"dies\" triggers happen). If it would go to your hand or library, you may put it in the command zone instead.",
+        "A player dealt 21 or more combat damage by the same commander over the game loses, no matter who controlled that commander. In multiplayer, your first mulligan is free."
+      ],
+      "rules": ["903.3", "903.4", "903.8", "903.9a", "903.9b", "903.10a", "103.5c"]
+    },
+    {
+      "title": "Targets, hexproof and protection",
+      "summary": [
+        "Targets are chosen when a spell is cast or an ability is put on the stack, and checked again when it resolves.",
+        "Hexproof: can't be the target of spells or abilities your opponents control. Shroud: can't be the target of any spells or abilities. Neither stops effects that don't target, like \"destroy all creatures\".",
+        "Protection from a quality means (DEBT): Damage from sources with that quality is prevented, it can't be Enchanted or Equipped by such things, it can't be Blocked by creatures with that quality, and it can't be Targeted by such spells or abilities."
+      ],
+      "rules": ["115.1", "608.2b", "702.11", "702.18", "702.16b", "702.16e", "702.16f"]
+    }
+  ],
+  "interactions": [
+    {"topic": "Combat", "question": "I attack with a creature that has first strike and it isn't blocked. After first-strike combat damage is dealt, I activate ninjutsu to return it to my hand and put a Ninja onto the battlefield tapped and attacking. Will the Ninja deal combat damage this turn?", "answer": "Yes", "explanation": "There are two combat damage steps because a creature had first strike. The Ninja didn't deal first-strike damage, so it deals damage in the second (regular) combat damage step. Your first striker deals its damage and then gets picked back up.", "rules": ["510.4", "702.49a", "702.49c"]},
+    {"topic": "Combat", "question": "Can I activate ninjutsu during the declare attackers step, before blockers are declared?", "answer": "No", "explanation": "Ninjutsu needs an unblocked attacking creature, and a creature only becomes blocked or unblocked in the declare blockers step.", "rules": ["509.1h", "702.49a"]},
+    {"topic": "Combat", "question": "My 2/2 creature with double strike is blocked by a 3/3 creature with no abilities. Do both creatures die?", "answer": "Yes", "explanation": "First-strike damage step: the 2/2 deals 2 to the 3/3, which survives. Regular damage step: the 2/2 deals 2 more (4 total, lethal) while the 3/3 deals 3 to it at the same time. Both die.", "rules": ["702.4", "510.4", "704.5g"]},
+    {"topic": "Combat", "question": "A 5/5 attacking creature with trample is blocked by a 2/2. What is the most combat damage it can assign to the defending player?", "answer": "3", "explanation": "It has to assign lethal damage (2) to the blocker first; the other 3 can go to the player.", "rules": ["702.19b"]},
+    {"topic": "Combat", "question": "A 5/5 attacking creature with trample and deathtouch is blocked by a 4/4. What is the most combat damage it can assign to the defending player?", "answer": "4", "explanation": "With deathtouch, 1 damage counts as lethal, so it assigns 1 to the blocker and 4 to the player.", "rules": ["702.19b", "702.2c"]},
+    {"topic": "Combat", "question": "A green 4/4 attacking creature with trample is blocked by a 2/2 with protection from green. What is the most combat damage it can assign to the defending player?", "answer": "2", "explanation": "It still has to assign lethal damage (2) to the blocker, even though protection will prevent that damage. The remaining 2 can go to the player.", "rules": ["702.19b", "702.16e"]},
+    {"topic": "APNAP order", "question": "It's my upkeep. I control a permanent with \"At the beginning of your upkeep\" and my opponent controls one with \"At the beginning of each upkeep\". Both trigger. Whose trigger resolves first?", "answer": "My opponent's", "explanation": "APNAP: as the active player you put your trigger on the stack first, then your opponent puts theirs on top. The stack resolves last in, first out, so your opponent's resolves first.", "rules": ["101.4", "603.3b"]},
+    {"topic": "APNAP order", "question": "In a four-player game, it's player A's turn and turn order is A, B, C, D. Each player controls an ability that triggers at the same moment. Whose ability resolves first?", "answer": "Player D's", "explanation": "Triggers go on the stack in APNAP order: A, then B, C, D. D's ends up on top, so it resolves first and A's resolves last.", "rules": ["101.4", "603.3b"]},
+    {"topic": "Priority and the stack", "question": "Can I cast an instant in response to my opponent playing a land, before the land enters the battlefield?", "answer": "No", "explanation": "Playing a land is a special action: it doesn't use the stack, so there's nothing to respond to. You can respond to any abilities it triggers, like landfall.", "rules": ["116.2a", "305.1"]},
+    {"topic": "Priority and the stack", "question": "A permanent's triggered ability is on the stack, and I destroy that permanent in response. Does the triggered ability still resolve?", "answer": "Yes", "explanation": "Once on the stack, an ability is independent of its source. It resolves anyway, using the source's last known information if it needs any.", "rules": ["113.7a"]},
+    {"topic": "Special actions and mana", "question": "My opponent casts a spell with split second. Can I activate a mana ability while it's on the stack?", "answer": "Yes", "explanation": "Split second stops spells and non-mana abilities, but mana abilities and special actions are still allowed.", "rules": ["702.61b"]},
+    {"topic": "Special actions and mana", "question": "My opponent casts a spell with split second. Can I cast an instant in response?", "answer": "No", "explanation": "While a spell with split second is on the stack, no player can cast spells or activate abilities other than mana abilities.", "rules": ["702.61b"]},
+    {"topic": "Special actions and mana", "question": "While a spell with split second is on the stack, can I turn a face-down morph creature face up?", "answer": "Yes", "explanation": "Turning a face-down creature face up is a special action, which split second doesn't stop.", "rules": ["702.61b", "116.2b"]},
+    {"topic": "Targets, hexproof and protection", "question": "I cast a spell that targets my opponent's creature. In response, that creature gains hexproof. Does my spell resolve and have any effect?", "answer": "No", "explanation": "Hexproof makes it an illegal target for your spells. With its only target illegal, the spell doesn't resolve.", "rules": ["702.11", "608.2b"]},
+    {"topic": "Targets, hexproof and protection", "question": "I cast a spell that targets two of my opponent's creatures. In response, one of them gains hexproof. Does my spell still affect the other creature?", "answer": "Yes", "explanation": "A spell with at least one legal target still resolves; it just doesn't affect the illegal target.", "rules": ["608.2b"]},
+    {"topic": "State-based actions", "question": "My creature has indestructible and gets -3/-3 until end of turn, making its toughness 0. Does it go to the graveyard?", "answer": "Yes", "explanation": "A creature with 0 toughness is put into its owner's graveyard as a state-based action. That isn't destruction, so indestructible doesn't help.", "rules": ["704.5f"]},
+    {"topic": "State-based actions", "question": "When the legend rule makes me put a legendary permanent into the graveyard, does that count as sacrificing it?", "answer": "No", "explanation": "The legend rule puts the others into the graveyard as a state-based action. It isn't a sacrifice, so \"whenever you sacrifice\" abilities don't trigger (\"dies\" abilities do).", "rules": ["704.5j"]},
+    {"topic": "State-based actions", "question": "I'm at 2 life. In combat, my creature with lifelink deals 3 damage while I'm dealt 5 combat damage at the same time. Do I lose the game?", "answer": "Yes", "explanation": "Combat damage is dealt all at once, and lifelink's gain happens at the same moment: 2 + 3 - 5 = 0. At 0 life you lose when state-based actions are checked.", "rules": ["510.2", "702.15b", "704.5a"]},
+    {"topic": "Layers and continuous effects", "question": "A 2/2 creature gets +1/+1 from Glorious Anthem. Then Turn to Frog makes it lose all abilities and become a blue Frog with base power and toughness 1/1. What are its power and toughness now?", "answer": "2/2", "explanation": "Setting power and toughness (layer 7b) applies before modifying them (7c), whatever the timestamps. It becomes 1/1, then gets +1/+1 from the Anthem.", "rules": ["613.4"]},
+    {"topic": "Layers and continuous effects", "question": "A 2/2 creature gets +3/+3 from Giant Growth this turn. Afterwards, an effect sets its base power and toughness to 1/1. What are its power and toughness now?", "answer": "4/4", "explanation": "The newer \"becomes 1/1\" effect applies in layer 7b, and Giant Growth's +3/+3 still applies after it in 7c.", "rules": ["613.4"]},
+    {"topic": "Layers and continuous effects", "question": "Humility is on the battlefield (all creatures lose all abilities and have base power and toughness 1/1). A creature there has three +1/+1 counters on it. What are its power and toughness?", "answer": "4/4", "explanation": "Humility sets it to 1/1 in layer 7b; the counters add +3/+3 in layer 7c.", "rules": ["613.4"]},
+    {"topic": "Layers and continuous effects", "question": "Blood Moon and Urborg, Tomb of Yawgmoth are both on the battlefield. Are my other nonbasic lands Swamps?", "answer": "No", "explanation": "Both are type-changing effects in layer 4, but Blood Moon removes Urborg's ability, so Urborg's effect depends on Blood Moon's. Blood Moon applies first, Urborg becomes a Mountain with no abilities, and nothing becomes a Swamp.", "rules": ["613.8", "613.8a"]},
+    {"topic": "Copies", "question": "Clone enters as a copy of a creature that has two +1/+1 counters on it. Does Clone get those counters?", "answer": "No", "explanation": "Counters aren't copiable values; Clone copies only the printed characteristics.", "rules": ["707.2"]},
+    {"topic": "Copies", "question": "A spell with {X} in its mana cost is copied. Does the copy have the same value of X?", "answer": "Yes", "explanation": "A copy of a spell copies the choices made when it was cast, including the value of X.", "rules": ["707.10"]},
+    {"topic": "Triggered abilities", "question": "Blood Artist and three other creatures are destroyed at the same time by a board wipe. Does Blood Artist's ability trigger for the other three creatures?", "answer": "Yes", "explanation": "\"Dies\" abilities are leaves-the-battlefield abilities that look back in time, so Blood Artist sees every creature that dies with it (and itself).", "rules": ["603.10a"]},
+    {"topic": "Zone changes and new objects", "question": "A creature got +2/+2 until end of turn, then was exiled and returned to the battlefield in the same turn. Does it still have +2/+2?", "answer": "No", "explanation": "It came back as a new object with no memory of its previous existence, so earlier effects on it no longer apply.", "rules": ["400.7"]},
+    {"topic": "Replacement and prevention effects", "question": "Two replacement effects from different players' permanents would both apply to damage that's about to be dealt to me. Who chooses the order they apply in?", "answer": "I do", "explanation": "The affected player (or the controller of the affected object) chooses which replacement effect applies first.", "rules": ["616.1"]},
+    {"topic": "Replacement and prevention effects", "question": "A creature I control would die. One effect says to exile it instead; my opponent controls a different effect saying to shuffle it into its owner's library instead. Who chooses which applies?", "answer": "I do", "explanation": "As the controller of the affected creature, you choose which replacement effect to apply.", "rules": ["616.1"]},
+    {"topic": "Summoning sickness", "question": "I gained control of my opponent's creature this turn. It doesn't have haste. Can I attack with it this turn?", "answer": "No", "explanation": "You haven't controlled it continuously since your most recent turn began.", "rules": ["302.6"]},
+    {"topic": "Summoning sickness", "question": "A creature without haste came under my control this turn. Can I activate one of its abilities that has {T} in the cost?", "answer": "No", "explanation": "Summoning sickness stops {T} and {Q} abilities as well as attacking. Abilities without those symbols in the cost are fine.", "rules": ["302.6"]},
+    {"topic": "Special actions and mana", "question": "At the end of a step, do I lose life for mana left unspent in my mana pool?", "answer": "No", "explanation": "Unspent mana just empties from your pool at the end of each step and phase. Mana burn no longer exists.", "rules": ["500.5", "106.4"]},
+    {"topic": "Commander", "question": "My commander has been cast from the command zone twice this game. How much additional generic mana does it cost to cast it from the command zone a third time?", "answer": "{4}", "explanation": "Commander tax is {2} more for each previous time it was cast from the command zone: 2 x 2 = {4}.", "rules": ["903.8"]},
+    {"topic": "Commander", "question": "I gain control of my opponent's commander and deal combat damage with it to a third player. Does that damage count toward the 21 commander damage from that commander?", "answer": "Yes", "explanation": "Commander damage counts damage from the same commander, whoever controls it.", "rules": ["903.10a"]},
+    {"topic": "Commander", "question": "My commander dies. Does it go to the graveyard first, so that abilities that trigger when a creature dies trigger?", "answer": "Yes", "explanation": "A commander going to the graveyard or exile gets there first; its owner may then move it to the command zone as a state-based action.", "rules": ["903.9a"]},
+    {"topic": "Commander", "question": "My commander would be shuffled into my library. May I put it into the command zone instead?", "answer": "Yes", "explanation": "For the hand or library it's a replacement effect: it can go straight to the command zone instead.", "rules": ["903.9b"]},
+    {"topic": "Commander", "question": "Does a hybrid mana symbol like {W/U} in a card's mana cost count as both white and blue for color identity?", "answer": "Yes", "explanation": "Color identity includes every color of every mana symbol in the mana cost and rules text, so a hybrid symbol counts as both.", "rules": ["903.4"]},
+    {"topic": "Commander", "question": "In a multiplayer Commander game, is my first mulligan free (I don't put any cards on the bottom)?", "answer": "Yes", "explanation": "In multiplayer games (and Brawl), the first mulligan doesn't count toward the cards you put on the bottom.", "rules": ["103.5c"]},
+    {"topic": "Keywords", "question": "A creature with undying that has a +1/+1 counter on it dies. Does undying return it to the battlefield?", "answer": "No", "explanation": "Undying only returns it if it had no +1/+1 counters on it when it died.", "rules": ["702.93"]},
+    {"topic": "Keywords", "question": "A creature with persist that has a +1/+1 counter on it (and no -1/-1 counters) dies. Does persist return it to the battlefield?", "answer": "Yes", "explanation": "Persist only checks for -1/-1 counters. It returns with a -1/-1 counter.", "rules": ["702.79"]},
+    {"topic": "Layers and continuous effects", "question": "I control Kudo, King Among Bears and Elesh Norn, Grand Cenobite. When my opponents cast creature spells, do their creatures die as soon as they enter the battlefield?", "answer": "Yes", "explanation": "Kudo sets every other creature's base power and toughness to 2/2 (layer 7b), and Elesh Norn gives your opponents' creatures -2/-2 (layer 7c), which always applies after the set, whatever the timestamps. So their creatures enter as 0/0 and are put into the graveyard as a state-based action. Their \"enters\" abilities still trigger. A creature survives only if something else boosts it, like +1/+1 counters or an anthem; and something that becomes a creature with its own set size (like a crewed Vehicle) uses that size instead of 2/2. Your own creatures are 4/4.", "rules": ["613.4b", "613.4c", "704.5f", "603.6a"]},
+    {"topic": "State-based actions", "question": "Platinum Angel is on the battlefield under my control and my life total is -3. Do I lose the game?", "answer": "No", "explanation": "Platinum Angel says you can't lose the game, which overrides the state-based action. If it leaves the battlefield while you're at 0 or less life, you lose the next time state-based actions are checked.", "rules": ["104.3b", "704.5a"]}
+  ]
+}

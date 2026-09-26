@@ -43,6 +43,45 @@ def _get(path):
     return response.json()["data"]
 
 
+# MTGJSON sealed categories -> (readable name, group for filtering)
+SEALED_CATEGORIES = {
+    "booster_box": ("Booster Box", "Booster Boxes"), "booster_pack": ("Booster Pack", "Booster Packs"),
+    "bundle": ("Bundle", "Bundles"), "deck": ("Deck", "Decks"), "deck_box": ("Deck Box", "Decks"),
+    "multiple_decks": ("Decks", "Decks"), "box_set": ("Box Set", "Box Sets & Secret Lairs"),
+    "limited_aid_tool": ("Kit", "Kits"), "kit": ("Kit", "Kits"), "booster_case": ("Booster Case", "Cases"),
+    "bundle_case": ("Bundle Case", "Cases"), "limited_aid_case": ("Kit Case", "Cases"), "case": ("Case", "Cases"),
+}
+_SUBTYPE_NAMES = {"mtgo_redemption": "MTGO Redemption", "fat_pack": "Fat Pack", "six_card": "Six-Card"}
+
+
+def product_type(category, subtype):
+    """A readable product type from MTGJSON's category and subtype, as a store would
+    list it: ("booster_box", "collector") -> "Collector Booster Box",
+    ("limited_aid_tool", "prerelease_kit") -> "Prerelease Kit",
+    ("bundle_case", "gift_bundle") -> "Gift Bundle Case"."""
+    base = SEALED_CATEGORIES.get(category, ("Other", ""))[0]
+    if subtype in (None, "", "default", "unknown", "other"):
+        return base
+    extra = _SUBTYPE_NAMES.get(subtype, subtype.replace("_", " ").title())
+    if base == "Other":
+        return extra
+    first = base.split()[0]  # "Gift Bundle" + "Bundle Case" share "Bundle"
+    return extra + base[len(first):] if extra.endswith(first) else f"{extra} {base}"
+
+
+def sealed_group(category):
+    return SEALED_CATEGORIES.get(category, ("", "Other"))[1]
+
+
+def sealed_catalog():
+    # Every sealed product MTGJSON lists, as rows for db.replace_sealed_catalog
+    scryfall._require_online()
+    return [{"uuid": product["uuid"], "name": product["name"], "set_code": s["code"], "set_name": s["name"],
+             "product_type": product_type(product.get("category"), product.get("subtype")),
+             "category": sealed_group(product.get("category")), "released": s.get("releaseDate")}
+            for s in _get("SetList.json") for product in s.get("sealedProduct") or []]
+
+
 def precon_cards(name, set_codes):
     """(deck names, card names) of the Commander precons with the card `name` in them,
     looked for among the precons of the sets it was printed in (set_codes)."""

@@ -129,12 +129,27 @@ def create_table():
                 image_url TEXT,
                 foil INTEGER,
                 price REAL,
-                edhrec_rank INTEGER
+                edhrec_rank INTEGER,
+                oracle_id TEXT
             )
         """)
-        if "edhrec_rank" not in {row["name"] for row in conn.execute("PRAGMA table_info(oracle_cards)")}:
+        oracle_columns = {row["name"] for row in conn.execute("PRAGMA table_info(oracle_cards)")}
+        if "edhrec_rank" not in oracle_columns:
             # Popularity in Commander (lower is more played); filled in by the next download
             conn.execute("ALTER TABLE oracle_cards ADD COLUMN edhrec_rank INTEGER")
+        if "oracle_id" not in oracle_columns:
+            # Scryfall's id for the card across printings, which rulings refer to
+            conn.execute("ALTER TABLE oracle_cards ADD COLUMN oracle_id TEXT")
+        # Official rulings for every card, from Scryfall (downloaded with the rules)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS card_rulings (
+                oracle_id TEXT NOT NULL,
+                published TEXT,
+                source TEXT,
+                comment TEXT NOT NULL
+            )
+        """)
+        conn.execute("CREATE INDEX IF NOT EXISTS card_rulings_card ON card_rulings (oracle_id)")
         # Scryfall's community tags ("ramp", "sacrifice-outlet"…) for the recommendations,
         # the most popular cards per tag and color identity, refreshed now and then
         conn.execute("""
@@ -200,6 +215,122 @@ def create_table():
         conn.execute("CREATE INDEX IF NOT EXISTS watchlist_name ON watchlist (name COLLATE NOCASE)")
         conn.execute("CREATE INDEX IF NOT EXISTS watchlist_printing "
                      "ON watchlist (set_code COLLATE NOCASE, collector_number COLLATE NOCASE)")
+        # Sealed product you own: booster boxes, bundles, precons… uuid is MTGJSON's when it
+        # came from the catalog (None for a custom entry). paid and value are per item, entered by hand.
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sealed (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL,
+                set_code TEXT,
+                set_name TEXT,
+                product_type TEXT,
+                uuid TEXT,
+                quantity INTEGER NOT NULL DEFAULT 1,
+                paid REAL,
+                value REAL,
+                notes TEXT NOT NULL DEFAULT '',
+                added TEXT
+            )
+        """)
+        # Every sealed product MTGJSON knows, to pick from. It's downloaded again whenever
+        # it's missing, so an older layout is simply dropped.
+        if conn.execute("SELECT EXISTS (SELECT 1 FROM pragma_table_info('sealed_catalog') WHERE name = 'released') "
+                        "AND NOT EXISTS (SELECT 1 FROM pragma_table_info('sealed_catalog') "
+                        "WHERE name = 'category')").fetchone()[0]:
+            conn.execute("DROP TABLE sealed_catalog")
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS sealed_catalog (
+                uuid TEXT PRIMARY KEY,
+                name TEXT NOT NULL,
+                set_code TEXT,
+                set_name TEXT,
+                product_type TEXT,
+                category TEXT,
+                released TEXT
+            )
+        """)
+
+
+# Sealed product
+
+_SEALED_FIELDS = ("name", "set_code", "set_name", "product_type", "uuid", "quantity", "paid", "value", "notes")
+
+
+def get_sealed():
+    with _connect() as conn:
+        return conn.execute("SELECT * FROM sealed ORDER BY name COLLATE NOCASE").fetchall()
+
+
+def add_sealed(**fields):
+    # Returns the new entry's id. Fields are _SEALED_FIELDS; missing ones take their defaults.
+    record = {"set_code": None, "set_name": None, "product_type": None, "uuid": None, "quantity": 1,
+              "paid": None, "value": None, "notes": "", **fields, "added": _now()}
+    with _connect() as conn:
+        columns = [*_SEALED_FIELDS, "added"]
+        return conn.execute(f"INSERT INTO sealed ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
+                            [record[c] for c in columns]).lastrowid
+
+
+def update_sealed(sealed_id, **fields):
+    fields = {k: v for k, v in fields.items() if k in _SEALED_FIELDS}
+    if fields:
+        with _connect() as conn:
+            conn.execute(f"UPDATE sealed SET {', '.join(f'{k} = ?' for k in fields)} WHERE id = ?",
+                         [*fields.values(), sealed_id])
+
+
+def remove_sealed(ids):
+    with _connect() as conn:
+        conn.executemany("DELETE FROM sealed WHERE id = ?", [(i,) for i in ids])
+
+
+def sealed_summary():
+    # (items, total value, total paid, value of the items that have a paid price too)
+    with _connect() as conn:
+        return tuple(conn.execute("""
+            SELECT COALESCE(SUM(quantity), 0), COALESCE(SUM(quantity * value), 0),
+                   COALESCE(SUM(quantity * paid), 0),
+                   COALESCE(SUM(CASE WHEN paid IS NOT NULL THEN quantity * value END), 0)
+            FROM sealed
+        """).fetchone())
+
+
+def replace_sealed_catalog(products):
+    # products: dicts with uuid, name, set_code, set_name, product_type, category, released
+    with _connect() as conn:
+        conn.execute("DELETE FROM sealed_catalog")
+        conn.executemany("INSERT OR REPLACE INTO sealed_catalog (uuid, name, set_code, set_name, product_type, "
+                         "category, released) VALUES (:uuid, :name, :set_code, :set_name, :product_type, "
+                         ":category, :released)", products)
+
+
+def has_sealed_catalog():
+    with _connect() as conn:
+        return conn.execute("SELECT EXISTS (SELECT 1 FROM sealed_catalog)").fetchone()[0] == 1
+
+
+def search_sealed_catalog(text="", category="", limit=500):
+    # Catalog products whose name, set or set code contains every word of text (and in
+    # category, a group like "Booster Boxes", if given), newest first
+    where, params = [], []
+    for word in text.split():
+        where.append("(name LIKE ? OR set_name LIKE ? OR set_code LIKE ?)")
+        params += [f"%{word}%"] * 3
+    if category:
+        where.append("category = ?")
+        params.append(category)
+    with _connect() as conn:
+        return conn.execute(f"""
+            SELECT * FROM sealed_catalog {'WHERE ' + ' AND '.join(where) if where else ''}
+            ORDER BY released DESC, set_name, name LIMIT ?
+        """, params + [limit]).fetchall()
+
+
+def sealed_categories():
+    # The catalog's product groups, biggest first
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT category FROM sealed_catalog GROUP BY category ORDER BY COUNT(*) DESC")]
 
 
 def merge_notes(existing, new):
@@ -604,7 +735,7 @@ def owned_by_name():
 
 _ORACLE_COLUMNS = ["name", "type_line", "mana_cost", "cmc", "colors", "color_identity", "oracle_text",
                    "legalities", "scryfall_id", "set_code", "set_name", "collector_number", "rarity",
-                   "image_url", "foil", "price", "edhrec_rank"]
+                   "image_url", "foil", "price", "edhrec_rank", "oracle_id"]
 
 
 def replace_oracle_cards(records):
@@ -613,7 +744,45 @@ def replace_oracle_cards(records):
         conn.execute("DELETE FROM oracle_cards")
         conn.executemany(
             f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
-            f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})", [{"edhrec_rank": None, **r} for r in records])
+            f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})",
+            [{"edhrec_rank": None, "oracle_id": None, **r} for r in records])
+
+
+def card_name_list():
+    # Every card name in the card database
+    with _connect() as conn:
+        return [row[0] for row in conn.execute("SELECT name FROM oracle_cards")]
+
+
+def cards_with_legality(format_key, status):
+    # Names of every card with this legality in a format ("banned", "restricted"…), A to Z
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT name FROM oracle_cards WHERE json_extract(legalities, ?) = ? ORDER BY name COLLATE NOCASE",
+            (f"$.{format_key}", status))]
+
+
+def replace_rulings(rulings):
+    # rulings: Scryfall's ruling dicts (oracle_id, source, published_at, comment). Replaces them all.
+    with _connect() as conn:
+        conn.execute("DELETE FROM card_rulings")
+        conn.executemany("INSERT INTO card_rulings (oracle_id, published, source, comment) VALUES (?, ?, ?, ?)",
+                         ((r["oracle_id"], r.get("published_at"), r.get("source"), r["comment"]) for r in rulings))
+
+
+def has_rulings():
+    with _connect() as conn:
+        return conn.execute("SELECT EXISTS (SELECT 1 FROM card_rulings)").fetchone()[0] == 1
+
+
+def card_rulings(name):
+    # A card's official rulings, oldest first (empty without the card database or the rulings)
+    with _connect() as conn:
+        return conn.execute("""
+            SELECT r.published, r.source, r.comment FROM card_rulings r
+            JOIN oracle_cards o ON o.oracle_id = r.oracle_id
+            WHERE o.name = ? COLLATE NOCASE ORDER BY r.published, r.rowid
+        """, (name,)).fetchall()
 
 
 def has_card_database():
@@ -622,10 +791,11 @@ def has_card_database():
 
 
 def card_database_outdated():
-    # Downloaded before popularity ranks were kept, so it needs downloading again
+    # Downloaded before popularity ranks or card ids (for rulings) were kept, so it needs downloading again
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards) AND NOT EXISTS "
-                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL)").fetchone()[0] == 1
+                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL AND oracle_id IS NOT NULL)"
+                            ).fetchone()[0] == 1
 
 
 def creature_type_lines():

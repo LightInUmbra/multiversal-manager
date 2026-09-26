@@ -8,11 +8,11 @@ then each card type. How cards are picked is in synergy.py.
 # Imports
 import math
 
-from PySide6.QtCore import Qt, QSize, QTimer, Signal
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, QTimer, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton, QMenu, QCheckBox,
-    QDoubleSpinBox, QScrollArea, QProgressBar, QSizePolicy, QInputDialog,
+    QDoubleSpinBox, QScrollArea, QProgressBar, QSizePolicy, QInputDialog, QLayout,
 )
 
 import background
@@ -47,6 +47,65 @@ def _owned(row):
 def _tooltip(row):
     return "\n".join(filter(None, [row["name"], row["type_line"], row["note"],
                                    f"Price: {money(row['price'])}", _owned(row)]))
+
+
+class _FlowLayout(QLayout):
+    """Lays widgets out left to right, wrapping onto more lines when there isn't room,
+    like words in a paragraph. It's only ever as wide as its widest item, so a row of
+    theme buttons can't force the window wider. (Qt's own FlowLayout example, trimmed.)"""
+
+    def __init__(self, parent=None, spacing=6):
+        super().__init__(parent)
+        self._items = []
+        self.setSpacing(spacing)
+        self.setContentsMargins(0, 0, 0, 0)
+
+    def addItem(self, item):
+        self._items.append(item)
+
+    def count(self):
+        return len(self._items)
+
+    def itemAt(self, index):
+        return self._items[index] if 0 <= index < len(self._items) else None
+
+    def takeAt(self, index):
+        return self._items.pop(index) if 0 <= index < len(self._items) else None
+
+    def expandingDirections(self):
+        return Qt.Orientation(0)
+
+    def hasHeightForWidth(self):
+        return True
+
+    def heightForWidth(self, width):
+        return self._arrange(QRect(0, 0, width, 0), move=False)
+
+    def setGeometry(self, rect):
+        super().setGeometry(rect)
+        self._arrange(rect, move=True)
+
+    def sizeHint(self):
+        return self.minimumSize()
+
+    def minimumSize(self):
+        size = QSize()
+        for item in self._items:
+            size = size.expandedTo(item.minimumSize())
+        return size
+
+    def _arrange(self, rect, move):
+        # Places the items (if move) and returns the height they need at rect's width
+        x, y, line_height = rect.x(), rect.y(), 0
+        for item in self._items:
+            hint = item.sizeHint()
+            if x + hint.width() > rect.right() + 1 and line_height:
+                x, y, line_height = rect.x(), y + line_height + self.spacing(), 0
+            if move:
+                item.setGeometry(QRect(QPoint(x, y), hint))
+            x += hint.width() + self.spacing()
+            line_height = max(line_height, hint.height())
+        return y + line_height - rect.y()
 
 
 def _load(identity, theme_keys, commanders, tags, cards, fetch, progress=None):
@@ -142,15 +201,13 @@ class RecommendationsPanel(QWidget):
         self.commander_info.setStyleSheet("color: gray;")
         self.commander_info.setWordWrap(True)
 
-        self.chip_row = QHBoxLayout()
+        # Theme buttons and filters wrap onto more lines rather than widening the window
+        self.chip_row = _FlowLayout()
         self.more_button = QToolButton()
         self.more_button.setText("More Themes")
         self.more_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
         self.more_button.setMenu(QMenu(self.more_button))
-        themes = QHBoxLayout()
-        themes.addLayout(self.chip_row)
-        themes.addWidget(self.more_button)
-        themes.addStretch()
+        self.chip_row.addWidget(self.more_button)
 
         self.owned_check = QCheckBox("Cards I own")
         self.owned_check.setToolTip("Only recommend cards in your collection")
@@ -172,16 +229,20 @@ class RecommendationsPanel(QWidget):
         self._price_timer = QTimer(self, singleShot=True, interval=400)
         self._price_timer.timeout.connect(lambda: self._filter_changed("recommend_max_price", self.price_input.value()))
         self.price_input.valueChanged.connect(lambda _: self._price_timer.start())
-        filters = QHBoxLayout()
-        for widget in (self.owned_check, QLabel("Max price:"), self.price_input, self.hide_check, self.staples_check):
+        price = QWidget()  # the label and its box wrap together
+        price_layout = QHBoxLayout(price)
+        price_layout.setContentsMargins(0, 0, 0, 0)
+        price_layout.addWidget(QLabel("Max price:"))
+        price_layout.addWidget(self.price_input)
+        filters = _FlowLayout(spacing=12)
+        for widget in (self.owned_check, price, self.hide_check, self.staples_check):
             filters.addWidget(widget)
-        filters.addStretch()
 
         right = QVBoxLayout()
         right.addWidget(self.commander_name)
         right.addWidget(self.commander_info)
         right.addWidget(QLabel("Build around:"))
-        right.addLayout(themes)
+        right.addLayout(self.chip_row)
         right.addLayout(filters)
         right.addStretch()
         self.header = QWidget()
@@ -267,7 +328,9 @@ class RecommendationsPanel(QWidget):
 
     def _build_themes(self):
         while self.chip_row.count():
-            self.chip_row.takeAt(0).widget().deleteLater()
+            widget = self.chip_row.takeAt(0).widget()
+            if widget is not self.more_button:
+                widget.deleteLater()
         chips = list(dict.fromkeys(self._suggested[:MAX_CHIPS] + self._themes))
         for key in chips:
             chip = QPushButton(synergy.theme(key).label)
@@ -277,6 +340,7 @@ class RecommendationsPanel(QWidget):
             chip.setToolTip("Suggested for this commander" if key in self._suggested else "")
             chip.toggled.connect(lambda on, key=key: self._toggle_theme(key, on))
             self.chip_row.addWidget(chip)
+        self.chip_row.addWidget(self.more_button)  # always last
 
         menu = self.more_button.menu()
         menu.clear()

@@ -116,6 +116,7 @@ def oracle_record(data):
         "foil": code,
         "price": float(price) if price else None,
         "edhrec_rank": data.get("edhrec_rank"),
+        "oracle_id": data.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
     }
 
 

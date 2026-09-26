@@ -26,7 +26,7 @@ _TRACKED = ("EXISTS (SELECT 1 FROM live.watchlist w "
             "WHERE w.scryfall_id = t.scryfall_id AND w.foil = t.foil AND w.tracked)")
 _BLANKED = {"watchlist": {"set_name", "rarity", "image_url", "price", "price_updated"}}
 # Tables backed up empty: entirely re-downloaded with the card database
-_REDOWNLOADED = {"oracle_cards"}
+_REDOWNLOADED = {"oracle_cards", "sealed_catalog", "card_rulings"}
 
 
 def backup_dir():

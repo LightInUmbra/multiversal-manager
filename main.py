@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QMenu, QComboBox,
+    QMenu, QComboBox, QTabWidget,
 )
 
 import background
@@ -20,6 +20,8 @@ import copy_details
 import database as db
 import finance
 import lists
+import rules_window
+import sealed
 import scryfall
 import trends
 from add_card_dialog import CardDialog
@@ -197,6 +199,9 @@ class MainWindow(QMainWindow):
         finance_button = QPushButton("Finance…")
         finance_button.setToolTip("Price spikes and drops across the cards you follow, or every card")
         finance_button.clicked.connect(self.show_finance)
+        rules_button = QPushButton("Rules…")
+        rules_button.setToolTip("The Comprehensive Rules, format and tournament rules, and card rulings")
+        rules_button.clicked.connect(self.show_rules)
         lists_button = QPushButton("Deck Builder…")
         lists_button.setToolTip("Build decks for any format, plus binders and wishlists")
         lists_button.clicked.connect(lambda: self.show_lists())
@@ -218,6 +223,7 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(trends_button)
         button_layout.addWidget(lists_button)
         button_layout.addWidget(finance_button)
+        button_layout.addWidget(rules_button)
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.edit_button)
         button_layout.addWidget(self.remove_button)
@@ -227,11 +233,24 @@ class MainWindow(QMainWindow):
         notice.setWordWrap(True)
         notice.setStyleSheet("color: gray; font-size: 10px;")
 
+        # Cards and sealed product each get a tab; the combined total shows under both
+        cards_page = QWidget()
+        cards_layout = QVBoxLayout(cards_page)
+        cards_layout.addLayout(filter_row)
+        cards_layout.addWidget(splitter, stretch=1)
+        cards_layout.addLayout(button_layout)
+        self.sealed_panel = sealed.SealedPanel()
+        self.sealed_panel.changed.connect(self.update_totals)
+        self.tabs = QTabWidget()
+        self.tabs.addTab(cards_page, "Cards")
+        self.tabs.addTab(self.sealed_panel, "Sealed")
+        self.totals_label = QLabel()
+        self.totals_label.setStyleSheet("color: gray;")
+
         central = QWidget()
         outer_layout = QVBoxLayout(central)
-        outer_layout.addLayout(filter_row)
-        outer_layout.addWidget(splitter, stretch=1)
-        outer_layout.addLayout(button_layout)
+        outer_layout.addWidget(self.tabs, stretch=1)
+        outer_layout.addWidget(self.totals_label)
         outer_layout.addWidget(notice)
         self.setCentralWidget(central)
 
@@ -257,6 +276,7 @@ class MainWindow(QMainWindow):
         quit_action = QAction("&Quit", self, shortcut=QKeySequence.StandardKey.Quit)
         quit_action.triggered.connect(self.close)
         file_menu.addAction(add_action)
+        file_menu.addAction("Add &Sealed Product…", self.add_sealed)
         file_menu.addAction(import_action)
         file_menu.addAction(export_action)
         file_menu.addSeparator()
@@ -284,11 +304,18 @@ class MainWindow(QMainWindow):
         lists_action = QAction("&Deck Builder…", self, shortcut="Ctrl+L")
         lists_action.triggered.connect(lambda: self.show_lists())
         view_menu.addAction(lists_action)
+        rules_action = QAction("&Rules…", self, shortcut="Ctrl+R")
+        rules_action.triggered.connect(self.show_rules)
+        view_menu.addAction(rules_action)
 
         help_menu = self.menuBar().addMenu("&Help")
         about_action = QAction(f"&About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def add_sealed(self):
+        self.tabs.setCurrentWidget(self.sealed_panel)
+        self.sealed_panel.add()
 
     # Offline mode
 
@@ -397,6 +424,13 @@ class MainWindow(QMainWindow):
             self._lists = lists.ListsWindow(self)
         self._lists.select_list(list_id)
 
+    def show_rules(self):
+        if getattr(self, "_rules", None) is None:
+            self._rules = rules_window.RulesWindow(self)
+        self._rules.show()
+        self._rules.raise_()
+        self._rules.activateWindow()
+
     def show_finance(self):
         # Separate window that stays open alongside the collection. The first time,
         # ask whether to start empty or track every card.
@@ -435,7 +469,7 @@ class MainWindow(QMainWindow):
     def update_summary(self):
         unique, count, value = db.get_summary()
         self.summary_label.setText(
-            f"Total value: ${value:,.2f}    ·    {count:,} card{'s' if count != 1 else ''}"
+            f"Card value: ${value:,.2f}    ·    {count:,} card{'s' if count != 1 else ''}"
             f" ({unique:,} unique)"
         )
         overall = trends.collection_change(self._changes)
@@ -450,6 +484,14 @@ class MainWindow(QMainWindow):
                 "font-size: 14px;" + (f" color: {color.name()};" if color else " color: gray;"))
         self.change_label.setToolTip("Price movement only; adding or removing cards doesn't count")
         db.record_value_snapshot()
+        self.update_totals()
+
+    def update_totals(self):
+        # Cards and sealed product, separately and together
+        cards = db.get_summary()[2]
+        sealed_value = db.sealed_summary()[1]
+        self.totals_label.setText(f"Collection total: ${cards + sealed_value:,.2f}    "
+                                  f"(cards ${cards:,.2f} + sealed ${sealed_value:,.2f})")
 
     def selected_ids(self):
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
@@ -722,6 +764,7 @@ class MainWindow(QMainWindow):
             self._finance.deleteLater()
             self._finance = None
         self.populate_table()
+        self.sealed_panel.reload()
         self.show_selected_card()
         self.statusBar().showMessage(
             f"Restored {Path(path).name}. Your previous collection was saved as {safety.name}.", 15000)
@@ -737,9 +780,31 @@ class MainWindow(QMainWindow):
 
 # App setup
 
+def _install_crash_log():
+    """Errors go to crash.log next to the collection instead of vanishing: Python errors
+    (also shown in a message, and the app carries on) and hard crashes (faulthandler)."""
+    import faulthandler
+    import traceback
+
+    log_path = Path(db.DB_NAME).with_name("crash.log")
+    log = open(log_path, "a", encoding="utf-8", buffering=1)  # kept open for faulthandler
+    faulthandler.enable(file=log)
+
+    def report(kind, value, tb):
+        details = "".join(traceback.format_exception(kind, value, tb))
+        log.write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S}\n{details}")
+        if sys.__stderr__:
+            sys.__stderr__.write(details)
+        QMessageBox.warning(None, APP_NAME, f"Something went wrong:\n\n{value}\n\n"
+                            f"The details were saved to {log_path.name} next to your collection.")
+
+    sys.excepthook = report
+
+
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    _install_crash_log()
     db.create_table()
     window = MainWindow()
     window.show()

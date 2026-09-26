@@ -19,6 +19,7 @@ Right now it's a desktop app. Web and mobile versions are on the way, and the pl
 - **Trends** (Ctrl+T) -- How your collection's value has changed over time, along with your biggest winners and losers.
 - **Bring your collection with you --** Import CSV exports from Moxfield, ManaBox, Deckbox and most other tools (columns are matched by their headers), or paste a text file/doc like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. You get to review everything before it's saved, and any card where the printing is a guess shows up first, with a picture to help you pick the right one.
 - **Export** to CSV whenever you like.
+- **Sealed product --** The *Sealed* tab keeps track of booster boxes, bundles, precons, prerelease kits and anything else still in shrinkwrap. Pick from MTGJSON's list of every sealed product ever made (search by name or set, filter by type), or type in anything that isn't listed. Each entry keeps what you paid and what it's worth now (you enter both for now; right-click to look it up on TCGplayer), and the bottom of the window shows your cards, your sealed product and the two combined.
 - **Quick edits --** Right-click or double-click a card to change its printing, finish, quantity or price. Adding a printing you already own just bumps the quantity instead of making a duplicate.
 - **Automatic backups --** The app backs up your collection once a day when it starts and keeps the last 10. Want one right now? *File → Back Up Now*. Need to go back? *File → Restore from Backup…* rolls you back, and saves your current collection first so you can undo the restore too. Backups stay small (a few MB up to tens of MB) because they skip price history that can just be downloaded again.
 
@@ -47,6 +48,21 @@ Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 - **History from day one --** The first launch grabs 90 days of price history for every card, so you get trends right away. After that the app saves each day's prices and the history just keeps growing.
 
 > Heads up: the first time you open Finance it downloads about 140 MB (card data plus 90 days of prices), and the database grows to a few hundred MB. Prices update once a day, as often as the data sources publish them.
+
+### Rules
+
+Every official rulebook in one place (Ctrl+R), kept on your computer so it works offline.
+
+- **Comprehensive Rules --** All ~3,100 rules, browsable by section and chapter, plus the glossary. Rule numbers anywhere ("see rule 702.19") are links.
+- **Formats --** Deck rules and the current banned list for every format, plus the full rules for Commander (from the Commander Format Panel), Brawl and Oathbreaker, and the casual variants like Two-Headed Giant and Planechase.
+- **Tournament rules --** The Magic Tournament Rules, the Infraction Procedure Guide and Judging at Regular REL, split into their sections.
+- **Ask a rules question --** Type a question in plain English ("I attack with a first striker and have a ninjutsu creature in hand, does the Ninja deal damage?") and get the verified rulings that match it, plain-English guides to the game concepts involved, the cards you mention with their rulings, and the exact rules that govern it. No AI and no internet needed.
+- **Game Concepts --** Plain-English guides to the systems behind most interactions: priority and the stack, APNAP order, combat and first strike, state-based actions, layers and timestamps, replacement effects, triggers, zone changes, copies, commander rules and more, each linked to the official rules.
+- **Verified interactions --** A growing library of checked rulings for common and tricky interactions, each with the rules that settle it.
+- **Card rulings --** Look up any card for its official rulings and the rules for its keywords. Add a few cards to see them side by side, with the keywords and rules terms they share.
+- **Search --** One box searches all of it.
+
+New versions are checked for once a week. Everything comes straight from Wizards of the Coast (and Scryfall for card rulings), so it's as current as the official documents.
 
 ---
 
@@ -89,7 +105,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Your data never leaves your machine. Your collection and price history live in `collection.db` next to `main.py`, settings go in `settings.ini`, backups go in `backups/`, and card images are cached in `image_cache/`. All of it is git-ignored.
+Your data never leaves your machine. Your collection and price history live in `collection.db` next to `main.py`, settings go in `settings.ini`, backups go in `backups/`, the rules documents in `rules/`, and card images are cached in `image_cache/`. All of it is git-ignored.
 
 ### Taking it offline
 
@@ -111,6 +127,10 @@ For the curious, here's how things are laid out:
 multiversal-manager/
     main.py                  # Main window: collection table, card details, totals
     finance.py               # Finance window: market tracking, spikes and drops, daily updates
+    sealed.py                # Sealed tab: booster boxes, bundles and other sealed product
+    rules.py                 # Downloads and reads the official rules documents and card rulings
+    rules_window.py          # Rules window: browse, search, ask a question, look up card rulings
+    rules_library.json       # Game Concepts guides and verified interactions (shared data)
     lists.py                 # Deck Builder: decks, binders and wishlists
     recommendations.py       # Deck Builder's Recommended tab (EDHREC-style page)
     synergy.py               # Commander themes and how recommendations are picked

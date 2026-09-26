@@ -222,6 +222,8 @@ collection.db
 image_cache/
 backups/
 settings.ini
+crash.log
+rules/
 multiversal-manager/
 
 # Claude Code personal settings
