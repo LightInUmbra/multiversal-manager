@@ -5,7 +5,8 @@ The deck builder: decks, binders and wishlists in three panels.
 - Middle: the selected list, grouped by section. Decks have a format, and every card
   and the deck as a whole are checked against it (see formats.py).
 - Right: cards to add -- My Cards (your collection) or Explore (every card, from the
-  card database), with search and filters.
+  card database), with search and filters, or Recommended: an EDHREC-style page of
+  cards for a Commander deck's commander (see recommendations.py).
 
 Any printing you own counts toward a list's cards.
 """
@@ -31,6 +32,7 @@ from card_browser import CardBrowser, PrintingDialog
 from card_image import CardImage
 from import_review_dialog import count, start_import
 from importer import SECTIONS
+from recommendations import RecommendationsPanel
 
 KINDS = {"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
 SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
@@ -174,7 +176,7 @@ class ListsWindow(QWidget):
         self.reload()
         self.search_cards()
         # Without a card database, the card panel offers the download instead
-        if db.has_card_database() and self._card_db_stale():
+        if db.has_card_database() and (self._card_db_stale() or db.card_database_outdated()):
             self.update_card_database(quiet=True)
 
     # Layout
@@ -198,6 +200,7 @@ class ListsWindow(QWidget):
         self.settings.setValue("deckbuilder_lightweight", on)
         (self.lightweight_action if on else self.standard_action).setChecked(True)
         self.card_browser.set_lightweight(on)
+        self.recommend_panel.set_lightweight(on)
 
     def _build_detail_panel(self):
         self.card_image = CardImage(width=240)
@@ -304,8 +307,10 @@ class ListsWindow(QWidget):
         self.card_tabs = QTabBar()
         self.card_tabs.addTab("My Cards")
         self.card_tabs.addTab("Explore")
+        self.card_tabs.addTab("Recommended")
         self.card_tabs.setTabToolTip(0, "Cards in your collection")
         self.card_tabs.setTabToolTip(1, "Every card in Magic, owned or not")
+        self.card_tabs.setTabToolTip(2, "Cards for a Commander deck's commander, by the themes you pick")
         self.card_tabs.currentChanged.connect(lambda _: self.search_cards())
 
         self.search_input = QLineEdit()
@@ -321,7 +326,9 @@ class ListsWindow(QWidget):
             self.type_combo.addItem(card_type, card_type)
         self.type_combo.currentIndexChanged.connect(lambda _: self.search_cards())
         self.color_buttons = {}
-        filters = QHBoxLayout()
+        self.filters = QWidget()
+        filters = QHBoxLayout(self.filters)
+        filters.setContentsMargins(0, 0, 0, 0)
         filters.addWidget(self.type_combo)
         for color, name in zip("WUBRGC", ("White", "Blue", "Black", "Red", "Green", "Colorless")):
             button = QToolButton()
@@ -368,6 +375,10 @@ class ListsWindow(QWidget):
         self.card_browser.selected.connect(self.show_card)
         self.card_browser.activated.connect(lambda row: self.add_card(row, 1))
         self.card_browser.menu_requested.connect(self.show_card_menu)
+        self.recommend_panel = RecommendationsPanel(self.settings)
+        self.recommend_panel.selected.connect(self.show_card)
+        self.recommend_panel.activated.connect(lambda row: self.add_card(row, 1))
+        self.recommend_panel.menu_requested.connect(self.show_card_menu)
         self._results = []
         self.results_label = QLabel()
         self.results_label.setStyleSheet("color: gray;")
@@ -376,12 +387,13 @@ class ListsWindow(QWidget):
         layout = QVBoxLayout(panel)
         layout.addWidget(self.card_tabs)
         layout.addWidget(self.search_input)
-        layout.addLayout(filters)
+        layout.addWidget(self.filters)
         layout.addWidget(self.legal_check)
         layout.addWidget(self.db_notice)
         layout.addWidget(self.db_button)
         layout.addWidget(self.db_progress)
         layout.addWidget(self.card_browser, stretch=1)
+        layout.addWidget(self.recommend_panel, stretch=1)
         layout.addWidget(self.results_label)
         return panel
 
@@ -449,9 +461,9 @@ class ListsWindow(QWidget):
         for widget in (self.rename_button, self.delete_button, self.import_button, self.export_button):
             widget.setEnabled(self._list is not None)
         deck = self.is_deck()
-        for widget in (self.format_label, self.format_combo, self.section_label, self.section_combo,
-                       self.legal_check):
+        for widget in (self.format_label, self.format_combo, self.section_label, self.section_combo):
             widget.setVisible(deck)
+        self.legal_check.setVisible(deck and not self.recommending())
         self.deck_tree.setColumnHidden(LEGAL_COL, not deck)
         self.deck_tree.clear()
         if self._list is None:
@@ -507,6 +519,8 @@ class ListsWindow(QWidget):
 
         self.show_card(self._card[0] if self._card else None, self._card[1] if self._card else None)
         self.refresh_prices()
+        if self.recommending():
+            self.update_recommendations()
 
     def _deck_item(self, entry, got, status):
         item = QTreeWidgetItem([
@@ -692,13 +706,39 @@ class ListsWindow(QWidget):
 
     # Card list (right)
 
+    def recommending(self):
+        return self.card_tabs.currentIndex() == 2
+
+    def update_recommendations(self):
+        panel = self.recommend_panel
+        fmt = formats.FORMATS.get(self.deck_format(), formats.FORMATS["casual"])
+        commanders = [e for e in self._entries if e["section"] == "Commander"]
+        if not db.has_card_database():
+            panel.show_message("Recommendations need the card database. Download it with the button above.")
+        elif not self.is_deck() or not fmt.commander:
+            panel.show_message("Recommendations are for Commander decks. Pick a deck with a Commander-style "
+                               "format (Commander, Brawl, Oathbreaker…), or start one with New….")
+        elif not commanders:
+            panel.show_message("Add this deck's commander first: find it under Explore, then right-click it "
+                               "→ Add 1 to → Commander.")
+        else:
+            panel.show_deck(self._list["id"], commanders, {e["name"] for e in self._entries})
+
     def search_cards(self):
         explore = self.card_tabs.currentIndex() == 1
+        recommending = self.recommending()
+        for widget in (self.search_input, self.filters, self.card_browser, self.results_label):
+            widget.setVisible(not recommending)
+        self.legal_check.setVisible(self.is_deck() and not recommending)
+        self.recommend_panel.setVisible(recommending)
         has_db = db.has_card_database()
         self.db_notice.setVisible(not has_db and not self._updating_cards)
         self.db_button.setVisible(not has_db and not self._updating_cards)
-        self.db_notice.setText("Explore, card types and legality need the card database: every card's "
-                               "rules and legality from Scryfall (about 80 MB, once, then weekly updates).")
+        self.db_notice.setText("Explore, Recommended, card types and legality need the card database: every "
+                               "card's rules and legality from Scryfall (about 80 MB, once, then weekly updates).")
+        if recommending:
+            self.update_recommendations()
+            return
         format_key = identity = None
         if self.is_deck() and self.legal_check.isChecked() and has_db:
             format_key = self.deck_format()
@@ -779,7 +819,9 @@ class ListsWindow(QWidget):
         self.db_button.hide()
         self.db_notice.setText("Downloading the card database…")
         self.db_notice.setVisible(not quiet)
-        last_bulk = self.settings.value("finance_bulk_updated") if db.has_card_database() else None
+        # A database from before popularity ranks were kept downloads again even if unchanged
+        fresh = db.has_card_database() and not db.card_database_outdated()
+        last_bulk = self.settings.value("finance_bulk_updated") if fresh else None
         track_new = self.settings.value("finance_mode") == finance.POPULATED
         background.run(_update_card_database, last_bulk, track_new, on_success=self._on_card_db,
                        on_error=self._on_card_db_failed, on_progress=self._on_card_db_progress)
@@ -796,6 +838,7 @@ class ListsWindow(QWidget):
         self.settings.setValue("carddb_checked", date.today().isoformat())
         if "bulk" in done:
             self.settings.setValue("finance_bulk_updated", done["bulk"])
+        self.recommend_panel.invalidate()
         self.reload()
         self.search_cards()
 

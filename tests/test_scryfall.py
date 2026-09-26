@@ -74,3 +74,11 @@ def test_offline_mode_answers_from_the_downloaded_card_list(temp_db, monkeypatch
         scryfall.bulk_info()                                         # guards every card data download
     with pytest.raises(scryfall.OfflineError):
         scryfall.fetch_prices([(1, "new", 0)])
+
+
+def test_online_lookups_still_reach_scryfall(monkeypatch):
+    calls = []
+    monkeypatch.setattr(scryfall, "_get_json", lambda path, params=None: calls.append(path) or {"data": []})
+    scryfall.bulk_info()
+    assert scryfall.tagged_cards("ramp", "G") == []
+    assert calls == ["/bulk-data/default-cards", "/cards/search"]

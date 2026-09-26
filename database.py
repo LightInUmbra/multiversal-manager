@@ -1,4 +1,5 @@
 # Imports
+import json
 import sqlite3 as sql
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
@@ -127,7 +128,22 @@ def create_table():
                 rarity TEXT,
                 image_url TEXT,
                 foil INTEGER,
-                price REAL
+                price REAL,
+                edhrec_rank INTEGER
+            )
+        """)
+        if "edhrec_rank" not in {row["name"] for row in conn.execute("PRAGMA table_info(oracle_cards)")}:
+            # Popularity in Commander (lower is more played); filled in by the next download
+            conn.execute("ALTER TABLE oracle_cards ADD COLUMN edhrec_rank INTEGER")
+        # Scryfall's community tags ("ramp", "sacrifice-outlet"…) for the recommendations,
+        # the most popular cards per tag and color identity, refreshed now and then
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS card_tags (
+                tag TEXT NOT NULL,
+                identity TEXT NOT NULL,
+                fetched TEXT NOT NULL,
+                names TEXT NOT NULL,
+                PRIMARY KEY (tag, identity)
             )
         """)
         conn.execute("""
@@ -588,7 +604,7 @@ def owned_by_name():
 
 _ORACLE_COLUMNS = ["name", "type_line", "mana_cost", "cmc", "colors", "color_identity", "oracle_text",
                    "legalities", "scryfall_id", "set_code", "set_name", "collector_number", "rarity",
-                   "image_url", "foil", "price"]
+                   "image_url", "foil", "price", "edhrec_rank"]
 
 
 def replace_oracle_cards(records):
@@ -597,12 +613,42 @@ def replace_oracle_cards(records):
         conn.execute("DELETE FROM oracle_cards")
         conn.executemany(
             f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
-            f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})", records)
+            f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})", [{"edhrec_rank": None, **r} for r in records])
 
 
 def has_card_database():
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards)").fetchone()[0] == 1
+
+
+def card_database_outdated():
+    # Downloaded before popularity ranks were kept, so it needs downloading again
+    with _connect() as conn:
+        return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards) AND NOT EXISTS "
+                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL)").fetchone()[0] == 1
+
+
+def creature_type_lines():
+    # Every distinct type line with creature types in the card database
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT DISTINCT type_line FROM oracle_cards WHERE type_line LIKE '%Creature%—%'")]
+
+
+def tagged_names(tag, identity, max_age=timedelta(days=30)):
+    # Names saved for a Scryfall tag and color identity, or None if never fetched or too old
+    with _connect() as conn:
+        row = conn.execute("SELECT fetched, names FROM card_tags WHERE tag = ? AND identity = ?",
+                           (tag, identity)).fetchone()
+    if row is None or datetime.fromisoformat(row["fetched"]) + max_age < datetime.now(timezone.utc):
+        return None
+    return set(json.loads(row["names"]))
+
+
+def save_tagged_names(tag, identity, names):
+    with _connect() as conn:
+        conn.execute("INSERT OR REPLACE INTO card_tags (tag, identity, fetched, names) VALUES (?, ?, ?, ?)",
+                     (tag, identity, _now(), json.dumps(sorted(names))))
 
 
 def card_names(text, limit=20):
@@ -653,7 +699,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT c.name, c.scryfall_id, c.foil, c.set_code, c.set_name, c.collector_number, c.image_url,
                    MAX(c.price) AS price, SUM(c.quantity) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities
+                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank
             FROM collection c LEFT JOIN oracle_cards o ON o.name = c.name
             GROUP BY c.scryfall_id, c.foil, c.name
         """
@@ -661,7 +707,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT o.name, o.scryfall_id, o.foil, o.set_code, o.set_name, o.collector_number, o.image_url,
                    o.price, COALESCE(own.copies, 0) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities
+                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank
             FROM oracle_cards o LEFT JOIN (
                 SELECT name, SUM(quantity) AS copies FROM collection GROUP BY name COLLATE NOCASE
             ) own ON own.name = o.name

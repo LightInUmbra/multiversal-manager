@@ -40,14 +40,15 @@ class CardGridModel(QAbstractListModel):
     background as they scroll into view (a view only asks for the items it shows).
     caption(row) returns (text, color or None); tooltip(row) returns text."""
 
-    def __init__(self, caption, tooltip, parent=None):
+    def __init__(self, caption, tooltip, parent=None, size=THUMB_SIZE):
         super().__init__(parent)
         self.rows = []
         self._caption, self._tooltip = caption, tooltip
+        self._size = size
         self._thumbs = OrderedDict()   # url -> QPixmap, least recently used first
         self._loading = set()
         self._rows_by_url = {}
-        self._placeholder = QPixmap(THUMB_SIZE)
+        self._placeholder = QPixmap(size)
         self._placeholder.fill(QColor("#cccccc"))
 
     def set_rows(self, rows):
@@ -90,7 +91,7 @@ class CardGridModel(QAbstractListModel):
         self._loading.discard(url)
         pixmap = QPixmap()
         if data and pixmap.loadFromData(data):
-            pixmap = pixmap.scaled(THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+            pixmap = pixmap.scaled(self._size, Qt.AspectRatioMode.KeepAspectRatio,
                                    Qt.TransformationMode.SmoothTransformation)
         else:
             pixmap = self._placeholder  # remembered, so a missing image isn't retried endlessly
@@ -105,28 +106,30 @@ class CardGridModel(QAbstractListModel):
 class CardBrowser(QStackedWidget):
     """A list of cards as an image grid or, in lightweight mode, a table.
     columns: [(header, fn(row) -> text or (text, color))] for the table;
-    caption / tooltip: as for CardGridModel. Emits the row that was selected,
-    double-clicked (activated) or right-clicked (menu_requested)."""
+    caption / tooltip: as for CardGridModel (caption_lines tall under thumbnails of
+    thumb_size). Emits the row that was selected, double-clicked (activated) or
+    right-clicked (menu_requested)."""
 
     selected = Signal(object)
     activated = Signal(object)
     menu_requested = Signal(object)
 
-    def __init__(self, columns, caption, tooltip, parent=None):
+    def __init__(self, columns, caption, tooltip, parent=None, thumb_size=THUMB_SIZE, caption_lines=1):
         super().__init__(parent)
         self.rows = []
         self.lightweight = False
         self._columns, self._tooltip = columns, tooltip
 
-        self.grid_model = CardGridModel(caption, tooltip, self)
+        self.grid_model = CardGridModel(caption, tooltip, self, thumb_size)
         self.grid = QListView()
         self.grid.setModel(self.grid_model)
         self.grid.setViewMode(QListView.ViewMode.IconMode)
         self.grid.setResizeMode(QListView.ResizeMode.Adjust)
         self.grid.setMovement(QListView.Movement.Static)
         self.grid.setUniformItemSizes(True)
-        self.grid.setIconSize(THUMB_SIZE)
-        self.grid.setGridSize(QSize(THUMB_SIZE.width() + 12, THUMB_SIZE.height() + 26))
+        self.grid.setIconSize(thumb_size)
+        self.grid.setGridSize(QSize(thumb_size.width() + 12, thumb_size.height() + 12 + 14 * caption_lines))
+        self.grid.setWordWrap(caption_lines > 1)
         self.grid.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.grid.selectionModel().selectionChanged.connect(lambda *_: self._on_selection())
         self.grid.doubleClicked.connect(lambda index: self.activated.emit(self.rows[index.row()]))

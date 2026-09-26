@@ -1,7 +1,8 @@
 """
 Price history backfill from MTGJSON (mtgjson.com), which keeps the last 90 days of
 TCGplayer prices for every printing. Scryfall only has today's price, so this is
-what gives the Finance window history from the first day.
+what gives the Finance window history from the first day. Also the decklists of
+Commander precons, for the deck builder's recommendations.
 
 Blocking network I/O -- call from a background thread.
 """
@@ -15,6 +16,7 @@ import re
 
 import requests
 
+import scryfall
 from scryfall import HEADERS, TIMEOUT
 
 BASE_URL = "https://mtgjson.com/api/v5"
@@ -33,6 +35,29 @@ def _stream(url):
     response = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=TIMEOUT, stream=True)
     response.raise_for_status()
     return response
+
+
+def _get(path):
+    response = requests.get(f"{BASE_URL}/{path}", headers={"User-Agent": HEADERS["User-Agent"]}, timeout=TIMEOUT)
+    response.raise_for_status()
+    return response.json()["data"]
+
+
+def precon_cards(name, set_codes):
+    """(deck names, card names) of the Commander precons with the card `name` in them,
+    looked for among the precons of the sets it was printed in (set_codes)."""
+    scryfall._require_online()
+    codes = {code.upper() for code in set_codes}
+    decks, cards = set(), set()
+    for deck in _get("DeckList.json"):
+        if deck["type"] != "Commander Deck" or deck["code"].upper() not in codes:
+            continue
+        data = _get(f"decks/{deck['fileName']}.json")
+        names = {card["name"] for board in ("commander", "mainBoard") for card in data.get(board) or []}
+        if name in names:
+            decks.add(deck["name"])
+            cards |= names
+    return decks, cards
 
 
 def _scryfall_ids():

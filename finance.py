@@ -115,6 +115,7 @@ def oracle_record(data):
         "image_url": scryfall.image_url_for(scryfall.Card(data)),
         "foil": code,
         "price": float(price) if price else None,
+        "edhrec_rank": data.get("edhrec_rank"),
     }
 
 

@@ -228,7 +228,7 @@ def fetch_prices(rows):
     # rows: list of (row_id, scryfall_id, foil). Returns ([(row_id, current price)], missing count).
     # Offline, saved prices are kept rather than restamped as fresh from old card data.
     _require_online()
-    cards =get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
+    cards = get_cards_by_id([scryfall_id for _, scryfall_id, _ in rows])
     updates, missing = [], 0
     for row_id, scryfall_id, foil in rows:
         card = cards.get(scryfall_id)
@@ -243,7 +243,7 @@ def fuzzy_card(name):
     # Scryfall's best guess for a misspelled or alternate card name, or None
     if offline:
         return None
-    data =_get_json("/cards/named", {"fuzzy": name})
+    data = _get_json("/cards/named", {"fuzzy": name})
     return Card(data) if data else None
 
 
@@ -251,8 +251,24 @@ def get_set_codes():
     # {lowercased set name: set code}, for files that only give the set's full name
     if offline:
         return database.set_codes()
-    data =_get_json("/sets")
+    data = _get_json("/sets")
     return {s["name"].lower(): s["code"] for s in data["data"]} if data else {}
+
+
+def tagged_cards(tag, identity, pages=2):
+    # Names of the most-played Commander cards with a Scryfall community tag (Tagger's
+    # "otag", e.g. "sacrifice-outlet") within a color identity like "WUB", most played first
+    _require_online()
+    names = []
+    query = f"otag:{tag} id<={identity or 'c'} legal:commander"
+    for page in range(1, pages + 1):
+        data = _get_json("/cards/search", {"q": query, "order": "edhrec", "page": page})
+        if data is None:  # no cards with that tag in these colors
+            break
+        names += [card["name"] for card in data["data"]]
+        if not data.get("has_more"):
+            break
+    return names
 
 
 def bulk_info(kind="default-cards"):
@@ -260,7 +276,7 @@ def bulk_info(kind="default-cards"):
     # compressed_size. default-cards is every printing (English, or its only language).
     # The first step of every card data / price history update, so it guards them all.
     _require_online()
-    return_get_json(f"/bulk-data/{kind}")
+    return _get_json(f"/bulk-data/{kind}")
 
 
 def iter_bulk_data(info, progress=None):

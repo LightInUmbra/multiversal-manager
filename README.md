@@ -29,6 +29,7 @@ Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pa
 - **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section, and a grid of card images to build from, each showing how many copies you own.
 - **Build from what you have, or explore all of what MTG has to offer --** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
 - **Pick your printing --** Choosing a different printing opens a window with every version of the card: its image, set, rarity, and the price of each finish, plus how many you own.
+- **Recommendations for your commander --** The *Recommended* tab works a lot like EDHREC. Put a commander in a Commander deck and the app suggests directions to take it (Elf Tribal, +1/+1 Counters, Spellslinger and so on). Pick one or more and you'll get a page of card images: High Synergy Cards, the staples (ramp, card draw, removal, board wipes), then creatures, instants and every other card type. It's worked out from each card's rules text and Scryfall's community card tags, with the cards most played in Commander coming first, and it works offline too. You can limit it to cards you own, set a price cap, and hide what's already in the deck.
 - **Legality checks as you go --** Deck and sideboard size, copy limits (with exceptions for basic lands and "any number" cards), banned and restricted cards, and commander eligibility and color identity are all checked while you build.
 - **Know what's missing --** Cards you don't own are marked, and every list shows what it's worth and what the missing cards would cost you.
 - **Import and Export --** Deck lists from Arena, Moxfield and most other tools import fine, and export from the app/software as a CSV file.
@@ -111,6 +112,8 @@ multiversal-manager/
     main.py                  # Main window: collection table, card details, totals
     finance.py               # Finance window: market tracking, spikes and drops, daily updates
     lists.py                 # Deck Builder: decks, binders and wishlists
+    recommendations.py       # Deck Builder's Recommended tab (EDHREC-style page)
+    synergy.py               # Commander themes and how recommendations are picked
     card_browser.py          # Card image grid / lightweight table, and the printing picker
     formats.py               # Formats and deck legality rules
     trends.py                # Price change math and the Trends window
