@@ -108,8 +108,8 @@ The goal: add a card on your phone while you're at the store, and it's already t
 
 There are two versions on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), same app either way:
 
-- **Installer** (`Multiversal Manager-<version>-setup.exe`): installs for your Windows user, no admin rights needed, with a Start menu entry, an optional desktop shortcut and an uninstaller. Your collection lives in `%LOCALAPPDATA%\Multiversal Manager`, and uninstalling never deletes it.
-- **Portable** (`Multiversal Manager-<version>-portable.zip`): unzip it anywhere, a USB stick included, and run `Multiversal Manager.exe`. Your collection, settings and backups stay in that folder, so you can carry it between computers. (That's what the `Portable Mode.txt` next to the .exe does; delete it and the portable copy uses your user folder like the installed one.)
+- **Installer** (`Multiversal-Manager-<version>-setup.exe`): installs for your Windows user, no admin rights needed, with a Start menu entry, an optional desktop shortcut and an uninstaller. Your collection lives in `%LOCALAPPDATA%\Multiversal Manager`, and uninstalling never deletes it.
+- **Portable** (`Multiversal-Manager-<version>-portable.zip`): unzip it anywhere, a USB stick included, and run `Multiversal Manager.exe`. Your collection, settings and backups stay in that folder, so you can carry it between computers. (That's what the `Portable Mode.txt` next to the .exe does; delete it and the portable copy uses your user folder like the installed one.)
 
 Moving an existing collection over? Use *Back Up Now* in the old copy, then *Restore from Backup* in the new one.
 
@@ -163,7 +163,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. The tag sets the version number, so `v1.2.0` makes `Multiversal Manager-1.2.0-setup.exe`.
+GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe`.
 
 ---
 

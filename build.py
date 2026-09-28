@@ -1,9 +1,9 @@
 """
 Builds the Windows app, in two versions from one PyInstaller build:
 
-- dist/Multiversal Manager-<version>-portable.zip: unzip anywhere (a USB stick, say) and
+- dist/Multiversal-Manager-<version>-portable.zip: unzip anywhere (a USB stick, say) and
   run. "Portable Mode.txt" beside the .exe keeps the collection and settings in that folder.
-- dist/Multiversal Manager-<version>-setup.exe: installs for the current Windows user (no
+- dist/Multiversal-Manager-<version>-setup.exe: installs for the current Windows user (no
   admin needed), with a Start menu entry and an uninstaller; the collection lives in
   %LOCALAPPDATA%\\Multiversal Manager. Needs Inno Setup 6 (winget install JRSoftware.InnoSetup).
 
@@ -24,6 +24,7 @@ import PyInstaller.__main__
 import database
 
 APP = "Multiversal Manager"
+DOWNLOAD = "Multiversal-Manager"  # download file names: GitHub turns spaces into dots
 VERSION = os.environ.get("APP_VERSION") or "1.0.0"  # releases set it from the tag (v1.2.0 -> 1.2.0)
 ROOT = Path(__file__).resolve().parent
 DIST = ROOT / "dist"
@@ -63,7 +64,7 @@ def build_app():
 
 def make_portable():
     # The app folder zipped with the portable marker beside the .exe
-    target = DIST / f"{APP}-{VERSION}-portable.zip"
+    target = DIST / f"{DOWNLOAD}-{VERSION}-portable.zip"
     with zipfile.ZipFile(target, "w", zipfile.ZIP_DEFLATED) as zipped:
         for path in BUILT.rglob("*"):
             zipped.write(path, Path(APP) / path.relative_to(BUILT))
@@ -86,8 +87,8 @@ def make_installer():
               "Install it with: winget install JRSoftware.InnoSetup")
         return None
     subprocess.run([str(compiler), f"/DAppVersion={VERSION}", f"/DSourceDir={BUILT}", f"/DOutputDir={DIST}",
-                    str(ROOT / "installer.iss")], check=True)
-    return DIST / f"{APP}-{VERSION}-setup.exe"
+                    f"/DOutputName={DOWNLOAD}-{VERSION}-setup", str(ROOT / "installer.iss")], check=True)
+    return DIST / f"{DOWNLOAD}-{VERSION}-setup.exe"
 
 
 def main():
