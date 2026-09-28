@@ -313,6 +313,17 @@ def _add_sync_columns(conn):
             PRIMARY KEY (tbl, uid)
         )
     """)
+    # How far this device has synced, and each row as it was when last synced (see sync.py)
+    conn.execute("CREATE TABLE IF NOT EXISTS sync_state (key TEXT PRIMARY KEY, value TEXT)")
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sync_shadow (
+            tbl TEXT NOT NULL,
+            uid TEXT NOT NULL,
+            updated_at TEXT NOT NULL,
+            data TEXT,
+            PRIMARY KEY (tbl, uid)
+        )
+    """)
     for table, edited in SYNC_TABLES.items():
         columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
         if "uid" not in columns:
