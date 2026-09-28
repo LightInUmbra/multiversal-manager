@@ -17,6 +17,7 @@ import copy_details  # noqa: E402
 import database as db  # noqa: E402
 import decks  # noqa: E402
 import rules_tab  # noqa: E402
+import scan  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
 
@@ -339,6 +340,8 @@ def main(page: ft.Page):
     # Layout
 
     page.appbar = ft.AppBar(title=ft.Text(APP_NAME), actions=[
+        ft.IconButton(ft.Icons.DOCUMENT_SCANNER_OUTLINED, tooltip="Scan cards",
+                      on_click=lambda e: page.run_task(open_scanner)),
         ft.IconButton(ft.Icons.PRICE_CHANGE_OUTLINED, tooltip="Refresh prices", on_click=refresh_prices),
         ft.IconButton(ft.Icons.SYNC, tooltip="Sync now", on_click=sync_now),
         ft.IconButton(ft.Icons.ACCOUNT_CIRCLE_OUTLINED, tooltip="Sync account", on_click=account),
@@ -351,7 +354,24 @@ def main(page: ft.Page):
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
     tabs = [deck_builder, rules_view]
 
+    scanner = scan.Scanner(page, toast, on_added=show_cards)
+
+    async def open_scanner():
+        # The scanner takes the Collection tab's place until back (or another tab) closes it
+        page.navigation_bar.selected_index = 0
+        body.content = scanner.view
+        page.floating_action_button.visible = False
+        await scanner.open()
+
+    def close_scanner():
+        scanner.close()
+        body.content = collection
+        page.floating_action_button.visible = True
+        show_cards()
+
     def switch(e):
+        if scanner.active:
+            scanner.close()
         index = page.navigation_bar.selected_index
         body.content = tabs[index - 1].view if index else collection
         page.floating_action_button.visible = index != 2  # nothing to add on Rules
@@ -368,7 +388,10 @@ def main(page: ft.Page):
 
     async def on_back(e):
         index = page.navigation_bar.selected_index
-        if index:
+        if scanner.active:
+            close_scanner()
+            await e.control.confirm_pop(False)
+        elif index:
             if not tabs[index - 1].back():
                 page.navigation_bar.selected_index = 0
                 switch(None)

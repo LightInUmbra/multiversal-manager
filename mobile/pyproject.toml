@@ -4,7 +4,7 @@ name = "multiversal-manager"
 version = "1.0.0"
 description = "Your Magic: The Gathering collection, synced with the desktop app"
 requires-python = ">=3.10"
-dependencies = ["flet==1.0.1", "requests>=2.31", "pypdf>=4"]
+dependencies = ["flet==1.0.1", "requests>=2.31", "pypdf>=4", "flet-camera==1.0.1", "flet-card-reader"]
 
 [tool.flet]
 product = "Multiversal Manager"
@@ -12,3 +12,20 @@ org = "io.github.lightinumbra"
 company = "Umbra Ortiz"
 # The app's permanent Android id: phones treat an app with a different one as a different app
 bundle_id = "io.github.lightinumbra.multiversalmanager"
+# The camera, for the card scanner
+permissions = ["camera"]
+
+# The card scanner's text reader lives in this repo (mobile/card_reader); the path is from
+# where build_apk.py stages the app (mobile/build/src)
+[tool.flet.dev_packages]
+flet-card-reader = "../../card_reader"
+
+[tool.flet.android]
+# Google's text recognition refers to its readers for other alphabets, which the app leaves
+# out (card names are in the Latin one); without these, the release build stops on them
+proguard_rules = [
+    "-dontwarn com.google.mlkit.vision.text.chinese.**",
+    "-dontwarn com.google.mlkit.vision.text.devanagari.**",
+    "-dontwarn com.google.mlkit.vision.text.japanese.**",
+    "-dontwarn com.google.mlkit.vision.text.korean.**",
+]

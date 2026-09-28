@@ -23,7 +23,7 @@ REPO = MOBILE.parent
 STAGE = MOBILE / "build" / "src"
 # The desktop modules the phone app imports, and what they import in turn
 SHARED = ["database.py", "sync.py", "scryfall.py", "copy_details.py", "formats.py", "brackets.py", "importer.py",
-          "rules.py", "judge.py", "ask.py", "set_notes.py", "rules_library.json"]
+          "rules.py", "judge.py", "ask.py", "set_notes.py", "rules_library.json", "card_scan.py"]
 MAGIC_PROJECTS = REPO / "external" / "Magic-Projects"
 
 

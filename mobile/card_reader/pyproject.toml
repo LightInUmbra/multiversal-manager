@@ -1,0 +1,19 @@
+# A Flet extension for the phone app: reads the text on a photo, on the phone, with Google's
+# ML Kit text recognition (offline and free). mobile/pyproject.toml pulls it in through
+# [tool.flet.dev_packages]; `flet build` compiles its Dart half (src/flutter) into the app.
+[project]
+name = "flet-card-reader"
+version = "0.1.0"
+description = "Reads the text on a photo, on the phone, for the Multiversal Manager card scanner"
+requires-python = ">=3.10"
+dependencies = ["flet>=1.0.1"]
+
+[tool.setuptools.package-data]
+"flutter.flet_card_reader" = ["**/*"]
+
+[tool.setuptools]
+license-files = []
+
+[build-system]
+requires = ["setuptools"]
+build-backend = "setuptools.build_meta"
