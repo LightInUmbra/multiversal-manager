@@ -148,6 +148,10 @@ def test_card_names_are_matched_as_names_not_everyday_words():
     question = "If I turn my Clone into a frog with Turn to Frog in response, does exile matter? Fire // Ice too."
     assert rules.mentioned_cards(question, names, rules_terms=["Exile"]) == ["Turn to Frog", "Fire // Ice", "Clone"]
     assert rules.mentioned_cards("Iron Maiden and Exile", names, rules_terms=["Exile"]) == ["Iron Maiden"]
+    # Names of several words can be typed in lowercase, without their commas
+    names = ["Kaya, Geist Hunter", "Ojer Taq, Deepest Foundation // Temple of Civilization", "Kaya"]
+    assert rules.mentioned_cards("I used kaya geist hunter's -2 with ojer taq deepest foundation out", names) == \
+        ["Ojer Taq, Deepest Foundation // Temple of Civilization", "Kaya, Geist Hunter"]
 
 
 def test_find_rules_brings_keywords_and_cards_first():
@@ -173,6 +177,10 @@ def test_rules_library_is_complete_and_findable():
         "what happens when you attack with a creature with first strike and you have a creature in hand with "
         "ninjutsu?", library)
     assert best["answer"] == "Yes" and "510.4" in best["rules"]
+    [(score, best), *_] = rules.similar_interactions(
+        "What happens when I play Thassa's Oracle after playing Demonic Consultation naming Thassa's Oracle while "
+        "Thassa's Oracle is in my hand?", library)
+    assert score >= 0.45 and best["answer"].startswith("Yes") and "104.2b" in best["rules"]
     assert rules.similar_interactions("what is the best way to cook pasta", library) == []
     assert "APNAP order" in [g["title"] for g in rules.guides_for("in what order do triggers resolve in a 4 player "
                                                                   "game?", library)]

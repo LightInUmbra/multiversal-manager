@@ -22,22 +22,30 @@ import re
 from datetime import date
 
 from PySide6.QtCore import Qt, QEvent, QStringListModel, QTimer
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QPushButton, QSplitter, QTreeWidget,
     QTreeWidgetItem, QTextBrowser, QProgressBar, QStackedWidget, QCompleter, QPlainTextEdit, QButtonGroup,
 )
 
 import background
+import brackets
 import database as db
 import finance
 import formats
+import judge
 import rules
 import scryfall
+import set_notes
 
 ROLE = Qt.ItemDataRole.UserRole
 # How closely a verified ruling has to match a question to be given as its answer; a looser
 # match is offered as "the closest verified ruling"
 CONFIDENT_MATCH = 0.45
+# Shared words can't tell situations apart ("+2/+2 until end of turn" then damage, or then
+# flickered), so an answer worked out from the question's own details beats any verified
+# ruling that isn't nearly the same question
+NEAR_EXACT_MATCH = 0.8
 SIMPLE, NERDS = "simple", "nerds"
 SEARCH_RESULTS = 150
 PAGE_STYLE = """
@@ -94,10 +102,23 @@ def card_names():
     return _card_names
 
 
+_notes = None
+
+
+def searchable_notes():
+    # [(id, info, text, lowercased text)] for every set note and MTG Wiki page, read once
+    global _notes
+    if _notes is None:
+        _notes = [(i, info, t, t.lower()) for i, info in set_notes.index().items()
+                  if (t := set_notes.text(i)) is not None]
+    return _notes
+
+
 def forget_parsed():
-    global _cr, _card_names
+    global _cr, _card_names, _notes
     _cr = None
     _card_names = None
+    _notes = None
     _parts.clear()
 
 
@@ -120,8 +141,7 @@ def _update_everything(progress=None):
     changed, errors = rules.update(progress)
     bulk = None
     if not db.has_card_database() or db.card_database_outdated():
-        step = (lambda value: progress(("Downloading the card database…", *value))) if progress else None
-        bulk = finance.update_market(None, None, history=False, progress=step).get("bulk")
+        bulk = finance.update_market(None, None, history=False, progress=progress).get("bulk")
         changed.append("Card database")
     return changed, errors, bulk
 
@@ -136,7 +156,7 @@ class RulesWindow(QWidget):
         self._updating = False
 
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search every rule, glossary term and tournament document…")
+        self.search_input.setPlaceholderText("Search every rule, glossary term, tournament document and set's notes…")
         self.search_input.setClearButtonEnabled(True)
         self._search_timer = QTimer(self, singleShot=True, interval=350)
         self._search_timer.timeout.connect(self.search)
@@ -295,6 +315,9 @@ class RulesWindow(QWidget):
         for key, fmt in formats.FORMATS.items():
             if key != "casual":
                 add(formats_item, fmt.label + (" (Arena)" if fmt.arena else ""), ("format", key))
+            if key == "commander":
+                add(formats_item, "Commander Brackets", ("brackets",),
+                    "The 1-5 brackets for matching Commander decks, and the Game Changers list")
         for name, chapter in rules.CR_FORMATS.items():
             if name != "Commander":
                 add(formats_item, f"{name} (variant)", ("chapter", chapter))
@@ -305,6 +328,17 @@ class RulesWindow(QWidget):
             for index, part in enumerate(document_parts(key)):
                 if part.heading and "." not in part.heading:  # sections and appendices; subsections are on their page
                     add(doc_item, f"{part.heading}. {part.title}", ("document", key, index))
+
+        notes = set_notes.index()
+        sets_item = add(None, "Set Release Notes", ("notes",),
+                        "Each set's release notes or FAQ: its mechanics and card-by-card clarifications")
+        for note_id, info in sorted(((i, n) for i, n in notes.items() if n["kind"] in ("release", "faq")),
+                                    key=lambda item: item[1].get("date") or "", reverse=True):
+            year = f" ({info['date'][:4]})" if info.get("date") else ""
+            add(sets_item, info["title"] + year, ("note", note_id))
+        wiki_item = add(None, "MTG Wiki", ("wiki", None), "The fan wiki's pages on every mechanic and set")
+        add(wiki_item, "Mechanics", ("wiki", "mechanic"))
+        add(wiki_item, "Sets", ("wiki", "set"))
 
         add(None, "Card Rulings", ("cards",), "Official rulings for any card, and the rules for its keywords")
         self.tree.expandItem(top)
@@ -325,7 +359,8 @@ class RulesWindow(QWidget):
         page = {"home": self.home_page, "section": self.section_page, "chapter": self.chapter_page,
                 "glossary": self.glossary_page, "format": self.format_page, "document": self.document_page,
                 "formats": self.formats_page, "tournament": self.tournament_page, "concepts": self.concepts_page,
-                "concept": self.concept_page, "interactions": self.interactions_page}[kind](*args)
+                "concept": self.concept_page, "interactions": self.interactions_page, "notes": self.notes_page,
+                "note": self.note_page, "wiki": self.wiki_page, "brackets": self.brackets_page}[kind](*args)
         self.show_page(page)
 
     def show_page(self, page):
@@ -343,6 +378,11 @@ class RulesWindow(QWidget):
         rulings = rules.fetched("rulings")
         rows.append(f"<li><b>Card rulings</b>: official rulings for every card, from Scryfall. "
                     f"<span class='muted'>({'checked ' + rulings[1] if rulings else 'not downloaded yet'})</span></li>")
+        kinds = [n["kind"] for n in set_notes.index().values()]
+        rows.append(f"<li><b>Set release notes</b>: {kinds.count('release') + kinds.count('faq')} sets' notes and "
+                    "FAQs from Wizards of the Coast, back to Ice Age.</li>")
+        rows.append(f"<li><b>MTG Wiki</b>: {kinds.count('mechanic')} mechanic and {kinds.count('set')} set pages "
+                    f"from the fan wiki ({set_notes.WIKI_LICENSE}).</li>")
         cr = comprehensive_rules()
         count = (f"<p>{sum(len(c.rules) for s in cr.sections for c in s.chapters):,} rules and "
                  f"{len(cr.glossary):,} glossary terms. {html.escape(cr.effective)}</p>") if cr else ""
@@ -401,6 +441,9 @@ class RulesWindow(QWidget):
         if chapter and cr and cr.chapter(chapter):
             body.append(f"<p>Comprehensive Rules: <a href='rule:{chapter}'>{chapter}. "
                         f"{html.escape(cr.chapter(chapter).title)}</a></p>")
+        if key == "commander":
+            body.append("<p>Matching decks by power: <a href='brackets:'>Commander Brackets</a> and the Game "
+                        "Changers list.</p>")
         if doc and rules.text(doc):
             body.append(f"<h2>{html.escape(rules.DOCUMENTS[doc][1])}</h2>{_paragraphs(rules.text(doc))}")
 
@@ -412,6 +455,42 @@ class RulesWindow(QWidget):
             if names:
                 cards = ", ".join(f"<a href='card:{html.escape(n)}'>{html.escape(n)}</a>" for n in names)
                 body.append(f"<h2>{title} ({len(names)})</h2><p>{cards}</p>")
+        return "".join(body)
+
+    def brackets_page(self):
+        body = ["<h1>Commander Brackets</h1><p>Wizards' optional way to match Commander games with people who "
+                "want the same kind of game. Each bracket has an intent and philosophy behind it, which is the most "
+                "important part; the limits below are the guardrails. Say your deck's bracket in the pregame "
+                "conversation. Brackets aren't Comprehensive Rules, and the banned list applies in every one.</p>"]
+        for b in brackets.BRACKETS:
+            limits = "".join(f"<li>{html.escape(limit)}</li>" for limit in b.limits)
+            body.append(f"<h2>Bracket {b.number}: {html.escape(b.name)}</h2>"
+                        f"<p><b>Decks:</b> {html.escape(b.decks)}<br><b>Win conditions:</b> "
+                        f"{html.escape(b.win_conditions)}<br><b>Gameplay:</b> {html.escape(b.gameplay)}<br>"
+                        f"<b>Game length:</b> expect {b.turns} before you win or lose.</p><ul>{limits}</ul>")
+        body.append("<h2>What the limits mean</h2>" + "".join(
+            f"<p><b>{html.escape(term)}</b>: {html.escape(text)}</p>" for term, text in brackets.TERMS))
+
+        names = db.game_changers()
+        if names:
+            cards = ", ".join(f"<a href='card:{html.escape(n)}'>{html.escape(n)}</a>" for n in names)
+            body.append(f"<h2>Game Changers ({len(names)})</h2><p>{cards}</p><p class='muted'>From the card "
+                        "database, which follows Wizards' list and updates with it.</p>")
+        else:
+            body.append("<h2>Game Changers</h2><p class='muted'>The list comes with the card database, which "
+                        "hasn't been downloaded (or needs downloading again) yet.</p>")
+
+        body.append("<h2>In the deck builder</h2><p>Commander decks show the bracket their cards fit, their Game "
+                    "Changers, mass land denial, extra-turn cards and two-card combos. Pick the bracket you're "
+                    "aiming for next to the format, and the cards that break it are marked in red, and "
+                    "Recommended leaves out cards that don't fit. Combos come from Commander Spellbook, so they're "
+                    "only checked online; offline, mass land denial and extra turns are read from the cards' rules "
+                    "text. Brackets 1 and 2 (and 4 and 5) look the same on paper: which one a deck is in is down "
+                    "to its intent.</p>")
+        body.append("<h2>History</h2>" + "".join(
+            f"<p><b>{html.escape(day)}</b>: {html.escape(text)}</p>" for day, text in brackets.HISTORY))
+        body.append("<p class='muted'>Sources: " + " · ".join(
+            f"<a href='{url}'>{html.escape(title)}</a>" for title, url in brackets.SOURCES) + "</p>")
         return "".join(body)
 
     def tournament_page(self):
@@ -435,6 +514,65 @@ class RulesWindow(QWidget):
                 break
             level = "h1" if "." not in part.heading else "h2"
             body.append(f"<{level}>{part.heading} {html.escape(part.title)}</{level}>" + _paragraphs(part.text))
+        return "".join(body)
+
+    def notes_page(self):
+        notes = set_notes.index()
+        releases = sum(n["kind"] == "release" for n in notes.values())
+        faqs = sum(n["kind"] == "faq" for n in notes.values())
+        if not releases + faqs:
+            return ("<h1>Set Release Notes</h1><p class='muted'>They download with the rules (Check for Updates). "
+                    "The first time takes a few minutes.</p>")
+        return ("<h1>Set Release Notes</h1><p>Every set's notes from Wizards of the Coast: the <b>General "
+                "Notes</b> explain the set's mechanics, and the <b>Card-Specific Notes</b> answer the common "
+                f"questions about its cards.</p><ul><li><b>{releases}</b> release notes from Wizards' site, for "
+                f"the sets since 2013</li><li><b>{faqs}</b> set FAQs from before that (Ice Age to 2013), from "
+                "Wizards' old site as the Internet Archive saved them</li></ul><p class='muted'>Rules change over "
+                "the years, so older notes can be out of date: the Comprehensive Rules and card rulings are current. "
+                "Rulings for every single card, including Secret Lair and other exclusives, are under Card "
+                "Rulings.</p>")
+
+    def wiki_page(self, kind):
+        notes = set_notes.index()
+        if kind is None:
+            return ("<h1>MTG Wiki</h1><p>The fan-run MTG Wiki's pages on every mechanic and every set: history, "
+                    "design and how things work, in plain English.</p><ul><li><a href='wiki:mechanic'>Mechanics"
+                    "</a></li><li><a href='wiki:set'>Sets</a></li></ul>" + self._wiki_credit())
+        pages = sorted(((i, n) for i, n in notes.items() if n["kind"] == kind), key=lambda p: p[1]["title"].lower())
+        if not pages:
+            return (f"<h1>{'Mechanics' if kind == 'mechanic' else 'Sets'}</h1><p class='muted'>MTG Wiki's pages "
+                    "download with the rules (Check for Updates).</p>")
+        links = " · ".join(f"<a href='note:{i}'>{html.escape(n['title'])}</a>" for i, n in pages)
+        return (f"<h1>{'Mechanics' if kind == 'mechanic' else 'Sets'} <span class='muted'>({len(pages)})</span></h1>"
+                f"<p>{links}</p>{self._wiki_credit()}")
+
+    def _wiki_credit(self, url="https://mtg.wiki"):
+        return (f"<p class='muted'>From <a href='{url}'>MTG Wiki</a>, a fan wiki, used under "
+                f"{set_notes.WIKI_LICENSE}. It isn't official rules: the Comprehensive Rules are.</p>")
+
+    def note_page(self, note_id):
+        info, content = set_notes.index().get(note_id), set_notes.text(note_id)
+        if not info or content is None:
+            return "<p class='muted'>This page hasn't been downloaded.</p>"
+        credit = {
+            "release": f"<p class='muted'>Release notes © Wizards of the Coast, from <a href='{info['url']}'>"
+                       "magic.wizards.com</a>.</p>",
+            "faq": f"<p class='muted'>© Wizards of the Coast, from Wizards' old website as saved by the Internet "
+                   f"Archive (<a href='{set_notes.ARCHIVE}{info['url']}'>original</a>). Rules have changed since, "
+                   "so some answers may be out of date.</p>",
+        }.get(info["kind"]) or self._wiki_credit(info["url"])
+        body = [f"<h1>{html.escape(info['title'])}</h1>", credit]
+        for line in content.split("\n"):
+            if not line.strip():
+                continue
+            if line.startswith("## "):
+                body.append(f"<h2>{html.escape(line[3:])}</h2>")
+            elif line.isupper() and len(line) < 60:           # GENERAL NOTES, CARD-SPECIFIC NOTES
+                body.append(f"<h2>{html.escape(line.title())}</h2>")
+            elif line.startswith(("• ", "* ")):
+                body.append(f"<p class='ruling'>{link_rules(line)}</p>")
+            else:
+                body.append(f"<p>{link_rules(line)}</p>")
         return "".join(body)
 
     def concepts_page(self):
@@ -462,21 +600,27 @@ class RulesWindow(QWidget):
 
     def _interaction(self, entry, note=""):
         links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in entry["rules"])
+        source = f"{note}Rules: {links}" if links else note.rstrip(" ·") or "Commander Brackets guidance"
         return (f"<p><b>Q:</b> {html.escape(entry['question'])}<br><b>A: {html.escape(entry['answer'])}.</b> "
-                f"{link_rules(entry['explanation'])}<br><span class='muted'>{note}Rules: {links}</span></p>")
+                f"{link_rules(entry['explanation'])}<br><span class='muted'>{source}</span></p>")
 
     # Ask a Rules Question
 
     def ask_intro(self):
         return ("<h1>Ask a Rules Question</h1><p>Type a question above and choose Look It Up. You'll get:</p><ul>"
                 "<li><b>Verified rulings</b> that match it, with checked answers</li>"
+                "<li>Answers <b>worked out from the rules</b> for combat (who can block, what dies, how much "
+                "damage), timing (can I cast, play or activate this now?), state checks (does it die, does a "
+                "player lose, the legend rule) and tokens (how many, through every doubler), step by step</li>"
+                "<li><b>Commander Brackets</b>: which brackets a card fits and whether it's a Game Changer</li>"
                 "<li>The <b>game concepts</b> it involves (the stack, APNAP, layers, combat…), explained</li>"
                 "<li>The <b>cards</b> you name, with their official rulings</li>"
                 "<li>The <b>rules</b> that govern it, straight from the Comprehensive Rules</li></ul>"
                 "<p><b>Simple Judge</b> shows just the answer, with the explanation a click away. <b>Rules for "
                 "Nerds</b> shows the answer with everything behind it underneath.</p>"
                 "<p class='muted'>Press Enter to look it up (Shift+Enter for a new line). Everything works offline. "
-                "Name cards with their capital letters (Blood Artist, not blood artist) so they're recognized.</p>")
+                "Card names can be typed any way (kaya geist hunter works); a one-word name needs its capital "
+                "letter (Clone, not clone), so everyday words aren't mistaken for cards.</p>")
 
     def eventFilter(self, watched, event):
         # Enter in the question box looks it up; Shift+Enter starts a new line
@@ -505,6 +649,16 @@ class RulesWindow(QWidget):
                 details += self._details
         self.ask_page.setHtml(PAGE_STYLE + self._answer + details)
 
+    def _mechanics(self, question, cards, cr):
+        """[(MTG Wiki note id, name)] for up to four keyword abilities and ability words the
+        question or its cards use. Keyword actions ("destroy", "exile") are in nearly every
+        question, so they're left out."""
+        pages = {n["title"].lower(): i for i, n in set_notes.index().items() if n["kind"] == "mechanic"}
+        names = [k for k, rule_id in cr.keywords().items() if rule_id.startswith("702")] + rules.ability_words(cr)
+        text = (question + "\n" + "\n".join(t or "" for _, t, _ in cards)).lower()
+        found = [n for n in names if n.lower() in pages and re.search(rf"\b{re.escape(n.lower())}\b", text)]
+        return [(pages[n.lower()], n) for n in dict.fromkeys(found)][:4]
+
     def _answer_card(self, heading, verdict, body):
         # The answer, set apart from everything else on the page (in light or dark mode)
         dark = self.palette().base().color().lightness() < 128
@@ -525,21 +679,41 @@ class RulesWindow(QWidget):
                                   "for Updates while you're online.</p>")
             return
         terms = [term for term, _ in cr.glossary] + list(cr.keywords())
-        cards = [(name, db.card_info(name)["oracle_text"], [r["comment"] for r in db.card_rulings(name)])
-                 for name in rules.mentioned_cards(question, card_names(), terms)]
+        named = {name: db.card_info(name) for name in rules.mentioned_cards(question, card_names(), terms)}
+        cards = [(name, info["oracle_text"], [r["comment"] for r in db.card_rulings(name)])
+                 for name, info in named.items()]
         matches = rules.similar_interactions(question, library())
+        creatures = {name: judge.creature_from_card(name, info, cr.keywords()) for name, info in named.items()
+                     if "Creature" in (info["type_line"] or "")}
+        worked = (judge.answer_brackets(question, named) or judge.answer_tokens(question, named)
+                  or judge.answer_combat(question, creatures)
+                  or judge.answer_timing(question, named) or judge.answer_state(question, named))
         guides = rules.guides_for(question + "\n" + "\n".join(text or "" for _, text, _ in cards), library())
         passages = [p for p in rules.find_rules(question, cr, cards, budget=24000) if p.kind in ("rule", "glossary")]
 
         index_of = {g["title"]: i for i, g in enumerate(library()["concepts"])}
         concept_links = ", ".join(f"<a href='concept:{index_of[g['title']]}'>{html.escape(g['title'])}</a>"
                                   for g in guides[:3])
-        if matches and matches[0][0] >= CONFIDENT_MATCH:
+        short = False     # a worked-out answer short enough to show in full in the answer card
+        verified = bool(matches) and matches[0][0] >= (NEAR_EXACT_MATCH if worked else CONFIDENT_MATCH)
+        if verified:
             entry = matches[0][1]
             rule_links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in entry["rules"])
             card = self._answer_card("ANSWER", html.escape(entry["answer"]) + ".",
                                      f"<p>{link_rules(entry['explanation'])}</p>"
-                                     f"<p class='muted'>From a verified ruling · Rules: {rule_links}</p>")
+                                     f"<p class='muted'>From a verified ruling"
+                                     f"{' · Rules: ' + rule_links if rule_links else ''}</p>")
+        elif worked:
+            rule_links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in worked.rules)
+            # A short why ("Serra Angel has flying…") goes right under the answer; step-by-step combat goes below
+            short = len(worked.steps) <= 3 and not any(s.startswith("<b>") for s in worked.steps)
+            # (for a longer one, its last step: what decided it; combat's summary is its verdict)
+            combat_steps = any(s.startswith("<b>") for s in worked.steps)
+            reasons = "".join(f"<p>{link_rules(s)}</p>" for s in
+                              (worked.steps if short else [] if combat_steps else worked.steps[-1:]))
+            card = self._answer_card("WORKED OUT FROM THE RULES", html.escape(worked.verdict) + ".", reasons +
+                                     "<p class='muted'>" + " · ".join(filter(None, [
+                                         html.escape(worked.assumes), rule_links and f"Rules: {rule_links}"])) + "</p>")
         elif matches:
             entry = matches[0][1]
             card = self._answer_card("CLOSEST VERIFIED RULING", "",
@@ -555,14 +729,29 @@ class RulesWindow(QWidget):
         self._answer = f"<h2 style='margin-bottom:0'>{html.escape(question)}</h2>" + card
 
         body = []
-        if matches[1:]:
+        if worked and not short:
+            # Steps are built from card names and the question's own words, with <b> step titles
+            body.append("<h2>How it was worked out</h2>" + "".join(
+                f"<p>{s if s.startswith('<b>') else link_rules(s)}</p>" for s in worked.steps))
+        # The rulings the answer card didn't already show
+        others = matches if worked and not verified else matches[1:]
+        if others:
             body.append("<h2>Other verified rulings that may help</h2>")
-            body += [self._interaction(entry, f"{round(score * 100)}% match · ") for score, entry in matches[1:]]
+            body += [self._interaction(entry, f"{round(score * 100)}% match · ") for score, entry in others]
         if guides:
             body.append("<h2>Game concepts involved</h2>")
             for guide in guides[:4]:
                 body.append(f"<h3><a href='concept:{index_of[guide['title']]}'>{html.escape(guide['title'])}</a></h3>"
                             + "".join(f"<p>{link_rules(p)}</p>" for p in guide["summary"]))
+        mechanics = self._mechanics(question, cards, cr)
+        if mechanics:
+            body.append("<h2>Mechanics</h2>")
+            for note_id, name in mechanics:
+                summary = next((l for l in (set_notes.text(note_id) or "").split("\n")
+                                if l.strip() and not l.startswith("## ")), "")
+                body.append(f"<h3><a href='note:{note_id}'>{html.escape(name.title())}</a></h3>"
+                            f"<p>{link_rules(summary[:600] + ('…' if len(summary) > 600 else ''))}</p>")
+            body.append(self._wiki_credit())
         if cards:
             body.append("<h2>Cards</h2>")
             for name, text, rulings in cards:
@@ -598,6 +787,8 @@ class RulesWindow(QWidget):
             QTimer.singleShot(0, lambda: self.page.scrollToAnchor(value))
         elif kind == "format":
             self.select_tree(("format", value))
+        elif kind == "brackets":
+            self.select_tree(("brackets",))
         elif kind == "concept":
             self.select_tree(("concept", int(value)))
         elif kind == "toggle":
@@ -610,6 +801,14 @@ class RulesWindow(QWidget):
             key, index = value.split(":")
             if not self.select_tree(("document", key, int(index))):
                 self.show_page(self.document_page(key, int(index)))  # a subsection: no entry of its own
+        elif kind == "note":
+            if not self.select_tree(("note", value)):
+                self.tree.setCurrentItem(None)
+                self.show_page(self.note_page(value))               # MTG Wiki pages have no entry of their own
+        elif kind == "wiki":
+            self.select_tree(("wiki", value))
+        elif kind in ("http", "https"):
+            QDesktopServices.openUrl(url)
 
     def select_tree(self, data):
         # Selects the category with this data (which shows its page); False if there's none
@@ -659,10 +858,23 @@ class RulesWindow(QWidget):
                     results.append(f"<p><a href='doc:{key}:{index}'><b>{rules.DOCUMENTS[key][0]} "
                                    f"{part.heading} {html.escape(part.title)}</b></a><br>"
                                    f"{link_rules(snippet(part.text))}</p>")
+        # Set notes and MTG Wiki pages: the first line in each that matches
+        source = {"release": "Release Notes", "faq": "Set FAQ", "mechanic": "MTG Wiki", "set": "MTG Wiki"}
+        for note_id, info, content, lower in searchable_notes():
+            if all(word in lower for word in words):
+                line = next((l for l in content.split("\n") if hit(l)), None)
+                if line:
+                    results.append(f"<p><a href='note:{note_id}'><b>{source[info['kind']]}: "
+                                   f"{html.escape(info['title'])}</b></a><br>{link_rules(snippet(line))}</p>")
         for key in ("commander", "brawl", "oathbreaker"):
             if rules.text(key) and hit(rules.text(key)):
                 results.append(f"<p><a href='format:{key}'><b>{rules.DOCUMENTS[key][0]} format rules</b></a><br>"
                                f"{link_rules(snippet(rules.text(key)))}</p>")
+        about_brackets = " ".join([b.name + " " + b.decks + " " + " ".join(b.limits) for b in brackets.BRACKETS]
+                                  + [term + " " + text for term, text in brackets.TERMS])
+        if hit("commander brackets " + about_brackets):
+            results.append(f"<p><a href='brackets:'><b>Commander Brackets</b></a><br>"
+                           f"{html.escape(snippet(about_brackets))}</p>")
         found = [(i, g) for i, g in enumerate(library()["concepts"]) if hit(g["title"] + " " + " ".join(g["summary"]))]
         interactions = [e for e in library()["interactions"] if hit(e["question"] + " " + e["explanation"])]
         results = ([f"<p><a href='concept:{i}'><b>Game Concept: {html.escape(g['title'])}</b></a><br>"

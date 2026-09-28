@@ -19,7 +19,7 @@ import background
 import card_image
 from card_image import CardImage
 
-THUMB_SIZE = QSize(100, 140)   # grid thumbnails (Scryfall's "small" images, scaled)
+THUMB_SIZE = QSize(146, 204)   # grid thumbnails: Scryfall's "small" images, at their own size
 THUMB_CACHE_SIZE = 500          # thumbnails kept in memory; the rest reload from the disk cache
 OWNED_COLOR = QColor("#1a8f3c")
 MUTED_COLOR = QColor("gray")
@@ -103,6 +103,24 @@ class CardGridModel(QAbstractListModel):
             self.dataChanged.emit(index, index, [Qt.ItemDataRole.DecorationRole])
 
 
+class _StretchGrid(QListView):
+    """An icon grid whose columns share the spare width, so there's no empty strip on
+    the right when the view is a little narrower than one more column."""
+
+    def __init__(self, cell):
+        super().__init__()
+        self._cell = cell  # the smallest a grid cell can be
+
+    def resizeEvent(self, event):
+        # Also runs when the viewport resizes (a scrollbar showing or hiding)
+        width = self.viewport().width() - 4
+        columns = max(1, width // self._cell.width())
+        size = QSize(max(self._cell.width(), width // columns), self._cell.height())
+        if size != self.gridSize():
+            self.setGridSize(size)
+        super().resizeEvent(event)
+
+
 class CardBrowser(QStackedWidget):
     """A list of cards as an image grid or, in lightweight mode, a table.
     columns: [(header, fn(row) -> text or (text, color))] for the table;
@@ -121,14 +139,15 @@ class CardBrowser(QStackedWidget):
         self._columns, self._tooltip = columns, tooltip
 
         self.grid_model = CardGridModel(caption, tooltip, self, thumb_size)
-        self.grid = QListView()
+        cell = QSize(thumb_size.width() + 12, thumb_size.height() + 12 + 14 * caption_lines)
+        self.grid = _StretchGrid(cell)
         self.grid.setModel(self.grid_model)
         self.grid.setViewMode(QListView.ViewMode.IconMode)
         self.grid.setResizeMode(QListView.ResizeMode.Adjust)
         self.grid.setMovement(QListView.Movement.Static)
         self.grid.setUniformItemSizes(True)
         self.grid.setIconSize(thumb_size)
-        self.grid.setGridSize(QSize(thumb_size.width() + 12, thumb_size.height() + 12 + 14 * caption_lines))
+        self.grid.setGridSize(cell)
         self.grid.setWordWrap(caption_lines > 1)
         self.grid.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
         self.grid.selectionModel().selectionChanged.connect(lambda *_: self._on_selection())

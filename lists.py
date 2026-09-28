@@ -3,7 +3,8 @@ The deck builder: decks, binders and wishlists in three panels.
 
 - Left: the selected card -- image, rules text, legality, how many you own, -1 / +1.
 - Middle: the selected list, grouped by section. Decks have a format, and every card
-  and the deck as a whole are checked against it (see formats.py).
+  and the deck as a whole are checked against it (see formats.py). Commander decks
+  also get their Commander bracket, and can aim for one (see brackets.py).
 - Right: cards to add -- My Cards (your collection) or Explore (every card, from the
   card database), with search and filters, or Recommended: an EDHREC-style page of
   cards for a Commander deck's commander (see recommendations.py).
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 import background
+import brackets
 import database as db
 import finance
 import formats
@@ -161,13 +163,19 @@ class ListsWindow(QWidget):
         self._updating_cards = False
         self._price_checked = set()   # entries refreshed this session, so a card Scryfall
                                       # can't find isn't retried on every reload
+        self._spellbook = {}          # deck cards -> Commander Spellbook's reading (None while
+                                      # asking, False if it couldn't be reached)
 
         splitter = QSplitter()
         splitter.addWidget(self._build_detail_panel())
         splitter.addWidget(self._build_deck_panel())
         splitter.addWidget(self._build_card_panel())
+        # The deck and the cards share extra width in proportion to these sizes (a splitter
+        # grows every stretching panel by its share of their total), so the card panel gets
+        # the larger part: card names rarely need a wide column
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([300, 640, 560])
+        splitter.setStretchFactor(2, 1)
+        splitter.setSizes([300, 560, 640])
         layout = QVBoxLayout(self)
         layout.setMenuBar(self._build_menu())
         layout.addWidget(splitter)
@@ -255,25 +263,46 @@ class ListsWindow(QWidget):
         for section in SECTIONS:
             self.section_combo.addItem(SECTION_TITLES[section], section)
         self.section_combo.setCurrentIndex(self.section_combo.findData("Main"))
+        self.bracket_title = QLabel("Bracket:")
+        self.bracket_combo = QComboBox()
+        self.bracket_combo.addItem("No target", None)
+        for number in range(1, 6):
+            self.bracket_combo.addItem(brackets.label(number), number)
+        self.bracket_combo.setToolTip("The Commander bracket this deck aims for: the deck is checked against it, "
+                                      "and Recommended leaves out cards that don't fit")
+        self.bracket_combo.currentIndexChanged.connect(self.on_bracket_changed)
         self.import_button = QPushButton("Import…")
         self.import_button.setToolTip("Add cards from a deck list or CSV file")
         self.import_button.clicked.connect(self.import_cards)
         self.export_button = QPushButton("Export…")
         self.export_button.setToolTip("Save as a text deck list other apps can import")
         self.export_button.clicked.connect(self.export_list)
+        # Sized to a dozen characters, not their longest item, so this panel can stay narrow
+        # and the card panel gets the room (the lists still show full names when opened)
+        for combo in (self.format_combo, self.section_combo, self.bracket_combo):
+            combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
+            combo.setMinimumContentsLength(12)
         second = QHBoxLayout()
         for widget in (self.format_label, self.format_combo, self.section_label, self.section_combo):
             second.addWidget(widget)
         second.addStretch()
         second.addWidget(self.import_button)
         second.addWidget(self.export_button)
+        third = QHBoxLayout()
+        third.addWidget(self.bracket_title)
+        third.addWidget(self.bracket_combo)
+        third.addStretch()
 
         self.summary_label = QLabel()
         self.summary_label.setWordWrap(True)
         self.types_label = QLabel()
         self.types_label.setStyleSheet("color: gray;")
+        self.types_label.setWordWrap(True)
         self.problems_label = QLabel()
         self.problems_label.setWordWrap(True)
+        self.bracket_label = QLabel()
+        self.bracket_label.setWordWrap(True)
+        self.bracket_label.setStyleSheet("color: gray;")
 
         self.deck_tree = QTreeWidget()
         self.deck_tree.setColumnCount(len(DECK_COLUMNS))
@@ -297,9 +326,11 @@ class ListsWindow(QWidget):
         layout = QVBoxLayout(panel)
         layout.addLayout(top)
         layout.addLayout(second)
+        layout.addLayout(third)
         layout.addWidget(self.summary_label)
         layout.addWidget(self.types_label)
         layout.addWidget(self.problems_label)
+        layout.addWidget(self.bracket_label)
         layout.addWidget(self.deck_tree, stretch=1)
         return panel
 
@@ -382,6 +413,7 @@ class ListsWindow(QWidget):
         self._results = []
         self.results_label = QLabel()
         self.results_label.setStyleSheet("color: gray;")
+        self.results_label.setWordWrap(True)  # a long unwrapped line would force the window wider
 
         panel = QWidget()
         layout = QVBoxLayout(panel)
@@ -447,11 +479,66 @@ class ListsWindow(QWidget):
             self.reload()
             self.search_cards()
 
+    def on_bracket_changed(self):
+        if self.is_commander_deck():
+            db.set_list_bracket(self._list["id"], self.bracket_combo.currentData())
+            self.reload()
+
     def is_deck(self):
         return self._list is not None and self._list["kind"] == "deck"
 
     def deck_format(self):
         return self._list["format"] if self.is_deck() else "casual"
+
+    def is_commander_deck(self):
+        # Brackets are for Commander only
+        return self.deck_format() == "commander"
+
+    # Commander brackets
+
+    def bracket_report(self):
+        # (the deck's brackets.Report, Spellbook's answer: a dict, None while asking, False if it
+        # failed, "offline"), asking Commander Spellbook about combos once per set of cards
+        cards = brackets.counted(self._entries)
+        key = (tuple(sorted({e["name"] for e in cards if e["section"] == "Commander"})),
+               tuple(sorted({e["name"] for e in cards if e["section"] == "Main"})))
+        if key not in self._spellbook and not scryfall.offline and cards:
+            self._spellbook[key] = None
+            background.run(brackets.fetch_spellbook, list(key[0]), list(key[1]),
+                           on_success=lambda result, key=key: self._on_spellbook(key, result),
+                           on_error=lambda _, key=key: self._on_spellbook(key, False))
+        found = self._spellbook.get(key) if key in self._spellbook else "offline"
+        if not cards:  # nothing to ask about
+            found = brackets.read_spellbook({"cards": [], "combos": []})
+        return brackets.check(self._entries, found if isinstance(found, dict) else None), found
+
+    def _on_spellbook(self, key, result):
+        self._spellbook[key] = result
+        if self.is_commander_deck():
+            self.reload()
+
+    def _show_bracket(self, report, found, target):
+        low = report.minimum()
+        fits = {1: "Bracket 1 or 2 (Exhibition or Core: that's down to the deck's intent)",
+                4: "Bracket 4 or 5 (Optimized or cEDH: that's down to the deck's intent)"}.get(
+            low, brackets.label(low))
+
+        def listed(title, names, limit=None):
+            if not names:
+                return f"{title}: none"
+            return f"{title} {len(names)}{'/' + str(limit) if limit else ''}: {', '.join(names)}"
+
+        parts = [f"<b>Fits {fits}</b>" + (f" · aiming for {brackets.label(target)}" if target else ""),
+                 listed("Game Changers", report.game_changers, 3 if target == 3 else None),
+                 listed("Mass land denial", report.mass_land_denial),
+                 listed("Extra turns", report.extra_turns)]
+        if report.combos_checked:
+            parts.append(listed("Two-card combos", [f"{' + '.join(c.cards)} ({c.results})" for c in report.combos]))
+        else:
+            parts.append({None: "Two-card combos: checking Commander Spellbook…",
+                          False: "Two-card combos: couldn't reach Commander Spellbook"}.get(
+                found, "Two-card combos: not checked while offline"))
+        self.bracket_label.setText("  ·  ".join(parts))
 
     # The selected list
 
@@ -463,6 +550,9 @@ class ListsWindow(QWidget):
         deck = self.is_deck()
         for widget in (self.format_label, self.format_combo, self.section_label, self.section_combo):
             widget.setVisible(deck)
+        commander = self.is_commander_deck()
+        for widget in (self.bracket_title, self.bracket_combo, self.bracket_label):
+            widget.setVisible(commander)
         self.legal_check.setVisible(deck and not self.recommending())
         self.deck_tree.setColumnHidden(LEGAL_COL, not deck)
         self.deck_tree.clear()
@@ -477,6 +567,9 @@ class ListsWindow(QWidget):
         self.format_combo.blockSignals(True)
         self.format_combo.setCurrentIndex(max(0, self.format_combo.findData(self._list["format"])))
         self.format_combo.blockSignals(False)
+        self.bracket_combo.blockSignals(True)
+        self.bracket_combo.setCurrentIndex(max(0, self.bracket_combo.findData(self._list["bracket"])))
+        self.bracket_combo.blockSignals(False)
 
         self._entries = db.get_list_entries(self._list["id"])
         have = completion(self._entries, db.owned_by_name())
@@ -486,6 +579,15 @@ class ListsWindow(QWidget):
         self.summary_label.setText(text)
 
         problems, statuses = formats.validate(self._entries, self.deck_format()) if deck else ([], {})
+        target = self._list["bracket"] if commander else None
+        if commander:
+            report, found = self.bracket_report()
+            self._show_bracket(report, found, target)
+            for why, names in report.broken(target) if target else []:
+                problems.append(f"{why}: {', '.join(names)}.")
+                for e in self._entries:
+                    if e["name"] in names and e["section"] in ("Main", "Commander"):
+                        statuses.setdefault(e["id"], f"Not in Bracket {target}")
         types = formats.type_counts(self._entries) if deck else {}
         self.types_label.setText("  ·  ".join(f"{_plural(t, n)} {n}" for t, n in types.items()))
         if not deck or self.deck_format() == "casual":
@@ -495,7 +597,8 @@ class ListsWindow(QWidget):
                                         "<br>".join(f"• {p}" for p in problems) + "</span>")
         else:
             self.problems_label.setText(f"<span style='color:#1a8f3c'>✓ Legal in "
-                                        f"{formats.label(self.deck_format())}</span>")
+                                        f"{formats.label(self.deck_format())}"
+                                        f"{' and fits ' + brackets.label(target) if target else ''}</span>")
 
         sections = SECTIONS if deck else [""]
         for section in sections:
@@ -539,6 +642,10 @@ class ListsWindow(QWidget):
             item.setFont(NAME_COL, font)
             item.setToolTip(NAME_COL, "Not in your collection")
         item.setForeground(LEGAL_COL, BAD if status else MUTED if entry["legalities"] is None else GOOD)
+        if self.is_commander_deck() and entry["game_changer"]:
+            item.setText(TYPE_COL, item.text(TYPE_COL) + "  ◆ Game Changer")
+            item.setToolTip(TYPE_COL, "On Wizards' Game Changers list: none in Brackets 1–2, up to three in "
+                                      "Bracket 3")
         if status:
             item.setForeground(NAME_COL, BAD)
         return item
@@ -578,6 +685,8 @@ class ListsWindow(QWidget):
             text = {"legal": "Legal", "restricted": "Restricted (1 copy)", "banned": "Banned",
                     "not_legal": "Not legal", None: "Legality unknown"}.get(status, status)
             info.append(f"{formats.label(self.deck_format())}: {text}")
+        if self.is_commander_deck() and row["game_changer"]:
+            info.append("Game Changer: none in Brackets 1–2, up to three in Bracket 3")
         self.detail_info.setText("\n".join(info))
 
     def on_deck_selection(self):
@@ -722,7 +831,10 @@ class ListsWindow(QWidget):
             panel.show_message("Add this deck's commander first: find it under Explore, then right-click it "
                                "→ Add 1 to → Commander.")
         else:
-            panel.show_deck(self._list["id"], commanders, {e["name"] for e in self._entries})
+            target = self._list["bracket"] if self.is_commander_deck() else None
+            game_changers = len({e["name"] for e in brackets.counted(self._entries) if e["game_changer"]})
+            panel.show_deck(self._list["id"], commanders, {e["name"] for e in self._entries}, target,
+                            game_changers)
 
     def search_cards(self):
         explore = self.card_tabs.currentIndex() == 1

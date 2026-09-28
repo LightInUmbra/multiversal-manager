@@ -30,7 +30,8 @@ Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pa
 - **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section, and a grid of card images to build from, each showing how many copies you own.
 - **Build from what you have, or explore all of what MTG has to offer --** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
 - **Pick your printing --** Choosing a different printing opens a window with every version of the card: its image, set, rarity, and the price of each finish, plus how many you own.
-- **Recommendations for your commander --** The *Recommended* tab works a lot like EDHREC. Put a commander in a Commander deck and the app suggests directions to take it (Elf Tribal, +1/+1 Counters, Spellslinger and so on). Pick one or more and you'll get a page of card images: High Synergy Cards, the staples (ramp, card draw, removal, board wipes), then creatures, instants and every other card type. It's worked out from each card's rules text and Scryfall's community card tags, with the cards most played in Commander coming first, and it works offline too. You can limit it to cards you own, set a price cap, and hide what's already in the deck.
+- **Recommendations for your commander --** The *Recommended* tab works a lot like EDHREC. Put a commander in a Commander deck and the app suggests directions to take it (Elf Tribal, +1/+1 Counters, Spellslinger and so on). Pick one or more and you'll get a page of card images: High Synergy Cards, the staples (ramp, card draw, removal, board wipes), then creatures, instants and every other card type. It's worked out from each card's rules text and Scryfall's community card tags, with the cards most played in Commander coming first, and it works offline too. You can limit it to cards you own, set a price cap, and hide what's already in the deck. Give the deck a target bracket and it leaves out the cards that don't fit (Game Changers in Brackets 1–2, a fourth one in Bracket 3, mass land denial below Bracket 4), and Game Changers are marked.
+- **Commander Brackets --** Commander decks show which of Wizards' brackets (1 Exhibition to 5 cEDH) their cards fit, with their Game Changers, mass land denial, extra-turn cards and two-card infinite combos listed. Pick the bracket you're aiming for next to the format and anything that breaks it is marked in red. Game Changers come from Scryfall's card data and work offline; combos come from [Commander Spellbook](https://commanderspellbook.com) when you're online.
 - **Legality checks as you go --** Deck and sideboard size, copy limits (with exceptions for basic lands and "any number" cards), banned and restricted cards, and commander eligibility and color identity are all checked while you build.
 - **Know what's missing --** Cards you don't own are marked, and every list shows what it's worth and what the missing cards would cost you.
 - **Import and Export --** Deck lists from Arena, Moxfield and most other tools import fine, and export from the app/software as a CSV file.
@@ -54,11 +55,13 @@ Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 Every official rulebook in one place (Ctrl+R), kept on your computer so it works offline.
 
 - **Comprehensive Rules --** All ~3,100 rules, browsable by section and chapter, plus the glossary. Rule numbers anywhere ("see rule 702.19") are links.
-- **Formats --** Deck rules and the current banned list for every format, plus the full rules for Commander (from the Commander Format Panel), Brawl and Oathbreaker, and the casual variants like Two-Headed Giant and Planechase.
+- **Formats --** Deck rules and the current banned list for every format, plus the full rules for Commander (from the Commander Format Panel), Brawl and Oathbreaker, the Commander Brackets (every bracket's intent and limits, what the terms mean, the current Game Changers list and the history of changes), and the casual variants like Two-Headed Giant and Planechase.
 - **Tournament rules --** The Magic Tournament Rules, the Infraction Procedure Guide and Judging at Regular REL, split into their sections.
-- **Ask a rules question --** Type a question in plain English ("I attack with a first striker and have a ninjutsu creature in hand, does the Ninja deal damage?") and get the verified rulings that match it, plain-English guides to the game concepts involved, the cards you mention with their rulings, and the exact rules that govern it. No AI and no internet needed.
+- **Ask a rules question --** Type a question in plain English ("I attack with a first striker and have a ninjutsu creature in hand, does the Ninja deal damage?") and get the verified rulings that match it, plain-English guides to the game concepts involved, the cards you mention with their rulings, and the exact rules that govern it. Combat (who can block, what dies, how much damage), timing (can I cast this now?) state questions (does it die, does a player lose, the legend rule), Commander Brackets (is this a Game Changer, what bracket can I play it in) and token counts (every Doubling Season, Chatterfang and Ojer Taq on the battlefield, applied in the best order) are worked out from the rules step by step. No AI and no internet needed.
 - **Game Concepts --** Plain-English guides to the systems behind most interactions: priority and the stack, APNAP order, combat and first strike, state-based actions, layers and timestamps, replacement effects, triggers, zone changes, copies, commander rules and more, each linked to the official rules.
 - **Verified interactions --** A growing library of checked rulings for common and tricky interactions, each with the rules that settle it.
+- **Set release notes --** Every set's release notes from Wizards back to 2013, and the set FAQs before that back to Ice Age (from Wizards' old site, via the Internet Archive): each set's mechanics and its card-by-card clarifications.
+- **MTG Wiki --** The fan wiki's pages on every mechanic and every set, credited under CC BY-NC-SA 4.0. Ask shows the summary of any mechanic in your question.
 - **Card rulings --** Look up any card for its official rulings and the rules for its keywords. Add a few cards to see them side by side, with the keywords and rules terms they share.
 - **Search --** One box searches all of it.
 
@@ -129,6 +132,8 @@ multiversal-manager/
     finance.py               # Finance window: market tracking, spikes and drops, daily updates
     sealed.py                # Sealed tab: booster boxes, bundles and other sealed product
     rules.py                 # Downloads and reads the official rules documents and card rulings
+    set_notes.py             # Every set's release notes and FAQs, and MTG Wiki's mechanic and set pages
+    judge.py                 # Rules calculators: combat, timing and state checks, worked out from the rules
     rules_window.py          # Rules window: browse, search, ask a question, look up card rulings
     rules_library.json       # Game Concepts guides and verified interactions (shared data)
     lists.py                 # Deck Builder: decks, binders and wishlists
@@ -136,6 +141,7 @@ multiversal-manager/
     synergy.py               # Commander themes and how recommendations are picked
     card_browser.py          # Card image grid / lightweight table, and the printing picker
     formats.py               # Formats and deck legality rules
+    brackets.py              # Commander Brackets: the brackets, Game Changers, and checking a deck
     trends.py                # Price change math and the Trends window
     database.py              # SQLite storage, price history and schema upgrades
     backup.py                # Daily backups, Back Up Now and Restore
@@ -160,6 +166,6 @@ multiversal-manager/
 
 ## Credits and legal
 
-Card data, images and daily prices come from [Scryfall](https://scryfall.com), and historical prices come from [MTGJSON](https://mtgjson.com). A huge thank you to both for making this data freely available; this app wouldn't exist without them. Card images are always shown in full so the artist credit and copyright line stay visible. Prices are market estimates, so please don't treat them as gospel.
+Card data, images and daily prices come from [Scryfall](https://scryfall.com), and historical prices come from [MTGJSON](https://mtgjson.com). Two-card combos for the Commander Brackets check come from [Commander Spellbook](https://commanderspellbook.com). A huge thank you to both for making this data freely available; this app wouldn't exist without them. Card images are always shown in full so the artist credit and copyright line stay visible. Prices are market estimates, so please don't treat them as gospel.
 
 Multiversal Manager is unofficial Fan Content permitted under the [Fan Content Policy](https://company.wizards.com/en/legal/fancontentpolicy). Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.

@@ -108,6 +108,9 @@ def create_table():
         """)
         if "format" not in {row["name"] for row in conn.execute("PRAGMA table_info(lists)")}:
             conn.execute("ALTER TABLE lists ADD COLUMN format TEXT NOT NULL DEFAULT 'casual'")
+        if "bracket" not in {row["name"] for row in conn.execute("PRAGMA table_info(lists)")}:
+            # The Commander bracket a deck aims for (1-5), or NULL for none
+            conn.execute("ALTER TABLE lists ADD COLUMN bracket INTEGER")
         # One row per card (not per printing) from Scryfall's bulk data: rules, types,
         # colors and legality in every format, plus a representative printing for the
         # card list. Joined to everything else by name.
@@ -130,7 +133,11 @@ def create_table():
                 foil INTEGER,
                 price REAL,
                 edhrec_rank INTEGER,
-                oracle_id TEXT
+                oracle_id TEXT,
+                power TEXT,
+                toughness TEXT,
+                loyalty TEXT,
+                game_changer INTEGER
             )
         """)
         oracle_columns = {row["name"] for row in conn.execute("PRAGMA table_info(oracle_cards)")}
@@ -140,6 +147,13 @@ def create_table():
         if "oracle_id" not in oracle_columns:
             # Scryfall's id for the card across printings, which rulings refer to
             conn.execute("ALTER TABLE oracle_cards ADD COLUMN oracle_id TEXT")
+        for column in ("power", "toughness", "loyalty"):
+            if column not in oracle_columns:
+                # Printed stats, for the rules calculators; filled in by the next download
+                conn.execute(f"ALTER TABLE oracle_cards ADD COLUMN {column} TEXT")
+        if "game_changer" not in oracle_columns:
+            # On Wizards' Commander Game Changers list (see brackets.py); filled in by the next download
+            conn.execute("ALTER TABLE oracle_cards ADD COLUMN game_changer INTEGER")
         # Official rulings for every card, from Scryfall (downloaded with the rules)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS card_rulings (
@@ -638,6 +652,11 @@ def create_list(name, kind, format="casual"):
                             (name, kind, _now(), format)).lastrowid
 
 
+def set_list_bracket(list_id, bracket):
+    with _connect() as conn:
+        conn.execute("UPDATE lists SET bracket = ? WHERE id = ?", (bracket, list_id))
+
+
 def set_list_format(list_id, format):
     with _connect() as conn:
         conn.execute("UPDATE lists SET format = ? WHERE id = ?", (format, list_id))
@@ -697,7 +716,7 @@ def get_list_entries(list_id):
     with _connect() as conn:
         return conn.execute("""
             SELECT e.*, o.type_line, o.mana_cost, o.cmc, o.colors, o.color_identity, o.oracle_text,
-                   o.legalities
+                   o.legalities, o.game_changer
             FROM list_entries e LEFT JOIN oracle_cards o ON o.name = e.name
             WHERE e.list_id = ? ORDER BY e.name COLLATE NOCASE
         """, (list_id,)).fetchall()
@@ -735,7 +754,7 @@ def owned_by_name():
 
 _ORACLE_COLUMNS = ["name", "type_line", "mana_cost", "cmc", "colors", "color_identity", "oracle_text",
                    "legalities", "scryfall_id", "set_code", "set_name", "collector_number", "rarity",
-                   "image_url", "foil", "price", "edhrec_rank", "oracle_id"]
+                   "image_url", "foil", "price", "edhrec_rank", "oracle_id", "power", "toughness", "loyalty", "game_changer"]
 
 
 def replace_oracle_cards(records):
@@ -745,13 +764,21 @@ def replace_oracle_cards(records):
         conn.executemany(
             f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
             f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})",
-            [{"edhrec_rank": None, "oracle_id": None, **r} for r in records])
+            [{"edhrec_rank": None, "oracle_id": None, "power": None, "toughness": None, "loyalty": None, "game_changer": 0, **r}
+             for r in records])
 
 
 def card_name_list():
     # Every card name in the card database
     with _connect() as conn:
         return [row[0] for row in conn.execute("SELECT name FROM oracle_cards")]
+
+
+def game_changers():
+    # Names of every Game Changer in the card database, A to Z
+    with _connect() as conn:
+        return [row[0] for row in conn.execute(
+            "SELECT name FROM oracle_cards WHERE game_changer = 1 ORDER BY name COLLATE NOCASE")]
 
 
 def cards_with_legality(format_key, status):
@@ -791,11 +818,12 @@ def has_card_database():
 
 
 def card_database_outdated():
-    # Downloaded before popularity ranks or card ids (for rulings) were kept, so it needs downloading again
+    # Downloaded before popularity ranks, card ids (for rulings), power and toughness or
+    # Game Changers were kept, so it needs downloading again
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards) AND NOT EXISTS "
-                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL AND oracle_id IS NOT NULL)"
-                            ).fetchone()[0] == 1
+                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL AND oracle_id IS NOT NULL"
+                            " AND power IS NOT NULL AND game_changer IS NOT NULL)").fetchone()[0] == 1
 
 
 def creature_type_lines():
@@ -869,7 +897,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT c.name, c.scryfall_id, c.foil, c.set_code, c.set_name, c.collector_number, c.image_url,
                    MAX(c.price) AS price, SUM(c.quantity) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank
+                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank, o.game_changer
             FROM collection c LEFT JOIN oracle_cards o ON o.name = c.name
             GROUP BY c.scryfall_id, c.foil, c.name
         """
@@ -877,7 +905,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT o.name, o.scryfall_id, o.foil, o.set_code, o.set_name, o.collector_number, o.image_url,
                    o.price, COALESCE(own.copies, 0) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank
+                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank, o.game_changer
             FROM oracle_cards o LEFT JOIN (
                 SELECT name, SUM(quantity) AS copies FROM collection GROUP BY name COLLATE NOCASE
             ) own ON own.name = o.name

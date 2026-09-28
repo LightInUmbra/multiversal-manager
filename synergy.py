@@ -18,6 +18,7 @@ from dataclasses import dataclass
 
 import requests
 
+import brackets
 import database as db
 import mtgjson
 import scryfall
@@ -375,26 +376,29 @@ def _off_color_land(card, identity):
 
 
 def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, staples=True,
-              precon_title="From the Precon", more=None):
+              precon_title="From the Precon", more=None, bracket=None, game_changers=0):
     """[(section title, rows, how many more there are)], like an EDHREC page: the
     commander's precon, High Synergy Cards, the staples (if staples), Top
     Cards (the most played in these colors), then each card type. pool is from
     score(); each row also gets a "note" (a caption line). more ({title: n}) shows n
     extra cards in a section. Each card shows up once, and the commanders, basic
-    lands and in_deck names are left out."""
+    lands and in_deck names are left out, as are cards that don't fit the Commander
+    bracket the deck aims for (bracket, with game_changers already in the deck)."""
     skip = {name.lower() for name in in_deck} | {c["name"].lower() for c in commanders}
     identity = identity_of(commanders)
     pool = [card for card in pool
             if card["name"].lower() not in skip and "Basic" not in (card["type_line"] or "")
-            and (card["owned"] or not owned_only) and not (max_price and (card["price"] or 0) > max_price)]
+            and (card["owned"] or not owned_only) and not (max_price and (card["price"] or 0) > max_price)
+            and brackets.card_allowed(card, bracket, 3 - game_changers)]
     more = more or {}
     used = set()
     sections = []
 
     def note(row):
+        game_changer = " · Game Changer" if row.get("game_changer") else ""
         if row["score"]:
-            return f"{row['synergy']}% synergy"
-        return f"#{row['edhrec_rank']:,} in Commander" if row["edhrec_rank"] else "Staple"
+            return f"{row['synergy']}% synergy{game_changer}"
+        return (f"#{row['edhrec_rank']:,} in Commander" if row["edhrec_rank"] else "Staple") + game_changer
 
     def add(title, rows, key, limit):
         rows = sorted((r for r in rows if r["name"] not in used), key=key, reverse=True)

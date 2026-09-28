@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QMenu, QComboBox, QTabWidget,
+    QMenu, QComboBox, QTabWidget, QScrollArea, QFrame,
 )
 
 import background
@@ -184,7 +184,12 @@ class MainWindow(QMainWindow):
 
         splitter = QSplitter()
         splitter.addWidget(self.table)
-        splitter.addWidget(detail_panel)
+        # The details scroll when there isn't room, rather than making the window taller than the screen
+        detail_scroll = QScrollArea()
+        detail_scroll.setWidgetResizable(True)
+        detail_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        detail_scroll.setWidget(detail_panel)
+        splitter.addWidget(detail_scroll)
         splitter.setStretchFactor(0, 3)
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([900, 380])
@@ -253,6 +258,7 @@ class MainWindow(QMainWindow):
         outer_layout.addWidget(self.totals_label)
         outer_layout.addWidget(notice)
         self.setCentralWidget(central)
+        self._fit_to_screen()
 
         self.populate_table()
         self.show_selected_card()
@@ -312,6 +318,15 @@ class MainWindow(QMainWindow):
         about_action = QAction(f"&About {APP_NAME}", self)
         about_action.triggered.connect(self.show_about)
         help_menu.addAction(about_action)
+
+    def _fit_to_screen(self):
+        # Open no bigger than the screen's free area (display scaling on laptops leaves less room
+        # than it looks), centered on it
+        area = self.screen().availableGeometry()
+        self.resize(min(self.width(), area.width() - 40), min(self.height(), area.height() - 80))
+        frame = self.frameGeometry()
+        frame.moveCenter(area.center())
+        self.move(frame.topLeft())
 
     def add_sealed(self):
         self.tabs.setCurrentWidget(self.sealed_panel)

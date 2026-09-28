@@ -16,13 +16,13 @@ from PySide6.QtWidgets import (
 )
 
 import background
+import brackets
 import database as db
 import scryfall
 import synergy
 from card_browser import CardBrowser, OWNED_COLOR, money
 from card_image import CardImage
 
-TILE = QSize(146, 204)   # Scryfall's "small" card images, at their own size
 MAX_CHIPS = 6            # suggested themes shown as buttons; the rest are under More Themes
 CHIP_STYLE = """
     QPushButton { border: 1px solid #9e9e9e; border-radius: 11px; padding: 3px 12px; }
@@ -131,7 +131,7 @@ class _Section(QWidget):
                      ("Owned", lambda r: (_owned(r), OWNED_COLOR if r["owned"] else None))],
             caption=lambda r: (f"{r['note']}\n{money(r['price'])}" + (f" · ×{r['owned']} owned" if r["owned"] else ""),
                                OWNED_COLOR if r["owned"] else None),
-            tooltip=_tooltip, thumb_size=TILE, caption_lines=2,
+            tooltip=_tooltip, caption_lines=2,
         )
         for view in (self.browser.grid, self.browser.table):
             view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -187,6 +187,7 @@ class RecommendationsPanel(QWidget):
         self.lightweight = False
         self._deck_id = self._identity = self._cards = self._pool = self._fetched = None
         self._commanders, self._names, self._in_deck = [], [], []
+        self._bracket, self._game_changers = None, 0  # the bracket the deck aims for, and its Game Changers
         self._themes, self._suggested, self._missing, self._precons = [], [], [], set()
         self._more = {}  # section title -> extra cards shown with Show More
         self._loading = self._pending = False
@@ -290,12 +291,14 @@ class RecommendationsPanel(QWidget):
         self.message.show()
         self._deck_id = None
 
-    def show_deck(self, deck_id, commanders, in_deck):
-        # commanders: the deck's Commander section entries; in_deck: every card name in the deck
+    def show_deck(self, deck_id, commanders, in_deck, bracket=None, game_changers=0):
+        # commanders: the deck's Commander section entries; in_deck: every card name in the deck;
+        # bracket: the Commander bracket it aims for (or None), with game_changers Game Changers so far
         for widget in (self.header, self.status, self.scroll):
             widget.show()
         self.message.hide()
         self._in_deck = list(in_deck)
+        self._bracket, self._game_changers = bracket, game_changers
         names = [c["name"] for c in commanders]
         if deck_id == self._deck_id and names == self._names:
             self.render()  # the deck changed, not the commander
@@ -434,7 +437,7 @@ class RecommendationsPanel(QWidget):
             staples=self.staples_check.isChecked(),
             # The Collector's Edition of a precon has the same cards, so the shortest name does
             precon_title=f"From {min(self._precons, key=len)}" if self._precons else "From the Precon",
-            more=self._more)
+            more=self._more, bracket=self._bracket, game_changers=self._game_changers)
 
         while self.page_layout.count():
             item = self.page_layout.takeAt(0)
@@ -451,6 +454,12 @@ class RecommendationsPanel(QWidget):
             text = f"{shown} cards for " + ", ".join(synergy.theme(k).label for k in self._themes)
         else:
             text = f"{shown} cards. Pick a theme above to see the cards with the most synergy"
+        if self._bracket and self._bracket <= 3:
+            left_out = {1: "Game Changers, mass land denial and extra turns",
+                        2: "Game Changers and mass land denial",
+                        3: "mass land denial" + (" and more Game Changers (the deck has three)"
+                                                 if self._game_changers >= 3 else "")}[self._bracket]
+            text += f"  ·  Aiming for {brackets.label(self._bracket)}, so {left_out} are left out"
         if self._missing:
             text += ("  ·  Working offline, so Scryfall's card tags aren't used" if scryfall.offline
                      else "  ·  Fetching Scryfall's card tags to sharpen these…")

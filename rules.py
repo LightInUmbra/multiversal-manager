@@ -366,7 +366,19 @@ def update(progress=None):
                 db.replace_rulings(json.loads(line) for line in lines if line.strip())
         return info["updated_at"], None
     attempt("rulings", total, rulings)
-    return changed, errors
+
+    # Every set's notes and MTG Wiki's mechanic and set pages (see set_notes.py)
+    import set_notes  # here: it builds on this module
+    cr = parse_cr(text("cr")) if text("cr") else None
+    notes_changed, notes_errors = set_notes.update(progress, cr.keywords() if cr else {}, ability_words(cr))
+    return changed + notes_changed, errors + notes_errors
+
+
+def ability_words(cr):
+    # "adamant", "landfall"…: the ability words rule 207.2c lists
+    rule = cr.rule("207.2c") if cr else None
+    listed = re.search(r"The ability words are (.+?)\.", rule.text) if rule else None
+    return [w.strip() for w in re.split(r",\s*(?:and\s+)?|\s+and\s+", listed.group(1)) if w.strip()] if listed else []
 
 
 # Finding the rules a question is about (what the rules judge reasons from)
@@ -425,6 +437,7 @@ CONCEPTS = {
     "Counters on permanents": (r"\+1/\+1|-1/-1|counters? on|loyalty counter", ["122.1", "122.3", "704.5q"]),
     "Control": (r"gain(?:s|ed)? control|\bsteal|control of|\bcontroller|\bowner", ["108.3", "108.4", "110.2"]),
     "Commander": (r"commander|command zone|color identity|\bpartner|companion", ["903"]),
+    "Commander Brackets": (r"\bbrackets?\b|game[- ]changers?|\bcedh\b|rule (?:zero|0)\b|power level", ["903.1"]),
     "Multiplayer": (r"multiplayer|free-for-all|two-headed|four[- ]player|\bpod\b", ["800.4"]),
     "Mulligans": (r"mulligan|opening hand|starting hand", ["103.5"]),
     "Turn structure": (
@@ -457,26 +470,53 @@ class Passage:
     why: str           # what in the question brought it in
 
 
+_EVERYDAY_WORDS = {
+    "a", "an", "the", "of", "to", "in", "on", "at", "and", "or", "for", "with", "from", "by", "as", "into", "up",
+    "down", "out", "over", "off", "all", "no", "not", "it", "its", "is", "be", "my", "your", "their", "i", "you",
+    "we", "they", "me", "each", "other", "more", "one", "two", "three", "first", "last", "next", "end", "turn",
+    "step", "phase", "combat", "damage", "life", "card", "cards", "draw", "play", "cast", "attack", "block",
+    "creature", "creatures", "spell", "spells", "time", "way", "back", "go", "take", "make", "stand", "hold",
+    "line", "day", "game", "win", "lose", "again", "now", "new", "enter", "leave", "this", "that", "what", "when",
+    "if", "do", "does", "can", "will", "same", "top", "bottom", "hand", "library", "graveyard", "stack", "land",
+    "lands", "mana", "counter", "token", "tokens", "target", "control", "pay", "cost", "double", "strike", "here",
+    "deal", "deals", "dealt", "dies", "die", "gain", "gains", "lose", "loses", "blocker", "attacker",
+}
+
+
+def _plain(text):
+    # "Kaya, Geist Hunter's" -> "kaya geist hunters": names as people type them
+    return re.sub(r"\s+", " ", re.sub(r"[,'’]", "", text.lower()))
+
+
 def mentioned_cards(question, names, rules_terms=()):
     """The card names (out of names) a question mentions, longest first, leaving out
-    names that are only part of a longer one mentioned ("Iron" in "Iron Maiden"). Names
-    have to be written as names, capitalized ("Clone", not "clone"); a split card's
-    one-word half ("Turn" of Turn // Burn) and names that are also rules terms
-    (rules_terms: "Exile", "Lifelink") only count as part of the full name."""
+    names that are only part of a longer one mentioned ("Iron" in "Iron Maiden"). Names of
+    several words can be typed any way ("kaya geist hunter" for Kaya, Geist Hunter); a
+    one-word name has to be capitalized ("Clone", not "clone"). A split card's one-word
+    half ("Turn" of Turn // Burn) and names that are also rules terms (rules_terms:
+    "Exile", "Lifelink") only count as part of the full name."""
     terms = {t.lower() for t in rules_terms}
-    found = []
-    for name in sorted(names, key=len, reverse=True):
-        forms = [name]
+    plain_question = _plain(question)
+    forms = []      # (the way it can be written, name): the full name, and a split or two-faced card's front
+    for name in names:
+        forms.append((name, name))
         front = name.split(" // ")[0]
         if front != name and " " in front:
-            forms.append(front)
-        for form in forms:
-            if len(form) < 4 or (form == name and name.lower() in terms):
-                continue
-            if re.search(rf"(?<![\w']){re.escape(form)}(?![\w'])", question):
-                if not any(form in longer for longer in found):
-                    found.append(name)
-                break
+            forms.append((front, name))
+    found, matched = [], []
+    # Longest first, so "Elesh Norn, Grand Cenobite" wins over "Elesh Norn" (of Elesh Norn // The Argent Etchings)
+    for form, name in sorted(forms, key=lambda f: len(f[0]), reverse=True):
+        if name in found or len(form) < 4 or (form == name and name.lower() in terms):
+            continue
+        plain = _plain(form)
+        # Several words, not all everyday ones ("The End" needs its capitals: "the end of turn")
+        if " " in form and not set(plain.split()) <= _EVERYDAY_WORDS:
+            hit = plain in plain_question and re.search(rf"(?<!\w){re.escape(plain)}s?(?!\w)", plain_question)
+        else:   # "Liliana's" counts; "Iron" in "Iron's-Edge" doesn't
+            hit = re.search(rf"(?<![\w']){re.escape(form)}(?!\w|'(?!s\b))", question)
+        if hit and not any(plain in longer for longer in matched):
+            found.append(name)
+            matched.append(plain)
     return found
 
 
