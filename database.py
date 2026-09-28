@@ -284,6 +284,79 @@ def create_table():
                 released TEXT
             )
         """)
+        _add_sync_columns(conn)
+
+
+# Sync: the tables holding what the user made themselves (everything else is downloaded
+# again on each device) get a uid shared across devices and an updated_at, and deletes
+# leave a tombstone, so another device can tell what changed since it last synced.
+# Triggers keep them current, so none of the functions here need to know about sync.
+# Each table lists the columns whose edits count as changes; price refreshes don't.
+SYNC_TABLES = {
+    "collection": ("name", "set_name", "quantity", "scryfall_id", "set_code", "collector_number", "foil",
+                   "rarity", "artist", "image_url", "condition", "language", "notes"),
+    "lists": ("name", "kind", "format", "bracket"),
+    "list_entries": ("list_id", "section", "name", "scryfall_id", "foil", "set_code", "set_name",
+                     "collector_number", "image_url", "quantity"),
+    "sealed": ("name", "set_code", "set_name", "product_type", "uuid", "quantity", "paid", "value", "notes"),
+}
+# Millisecond UTC timestamps, so edits made seconds apart on two devices still order correctly
+SYNC_NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+def _add_sync_columns(conn):
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS sync_tombstones (
+            tbl TEXT NOT NULL,
+            uid TEXT NOT NULL,
+            deleted_at TEXT NOT NULL,
+            PRIMARY KEY (tbl, uid)
+        )
+    """)
+    for table, edited in SYNC_TABLES.items():
+        columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+        if "uid" not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN uid TEXT")
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN updated_at TEXT")
+            conn.execute(f"UPDATE {table} SET uid = lower(hex(randomblob(16))), updated_at = {SYNC_NOW}")
+        conn.execute(f"CREATE UNIQUE INDEX IF NOT EXISTS {table}_uid ON {table} (uid)")
+        # A row keeps a uid/updated_at it was inserted with (one arriving from another device)
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_sync_insert AFTER INSERT ON {table} BEGIN
+                UPDATE {table} SET uid = COALESCE(NEW.uid, lower(hex(randomblob(16)))),
+                                   updated_at = COALESCE(NEW.updated_at, {SYNC_NOW})
+                WHERE id = NEW.id;
+            END
+        """)
+        # ...and the same for an update that sets updated_at itself
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_sync_update AFTER UPDATE OF {', '.join(edited)} ON {table}
+            WHEN NEW.updated_at IS OLD.updated_at BEGIN
+                UPDATE {table} SET updated_at = {SYNC_NOW} WHERE id = NEW.id;
+            END
+        """)
+        conn.execute(f"""
+            CREATE TRIGGER IF NOT EXISTS {table}_sync_delete AFTER DELETE ON {table} BEGIN
+                INSERT OR REPLACE INTO sync_tombstones (tbl, uid, deleted_at) VALUES ('{table}', OLD.uid, {SYNC_NOW});
+            END
+        """)
+    # The watchlist is every printing, downloaded again on each device; only which ones
+    # are tracked is the user's, keyed by (scryfall_id, foil), which is the same everywhere
+    if "tracked_at" not in {row["name"] for row in conn.execute("PRAGMA table_info(watchlist)")}:
+        conn.execute("ALTER TABLE watchlist ADD COLUMN tracked_at TEXT")
+        conn.execute(f"UPDATE watchlist SET tracked_at = {SYNC_NOW} WHERE tracked = 1")
+    conn.execute(f"""
+        CREATE TRIGGER IF NOT EXISTS watchlist_sync_insert AFTER INSERT ON watchlist
+        WHEN NEW.tracked = 1 AND NEW.tracked_at IS NULL BEGIN
+            UPDATE watchlist SET tracked_at = {SYNC_NOW} WHERE scryfall_id = NEW.scryfall_id AND foil = NEW.foil;
+        END
+    """)
+    conn.execute(f"""
+        CREATE TRIGGER IF NOT EXISTS watchlist_sync_update AFTER UPDATE OF tracked ON watchlist
+        WHEN NEW.tracked IS NOT OLD.tracked AND NEW.tracked_at IS OLD.tracked_at BEGIN
+            UPDATE watchlist SET tracked_at = {SYNC_NOW} WHERE scryfall_id = NEW.scryfall_id AND foil = NEW.foil;
+        END
+    """)
 
 
 # Sealed product
