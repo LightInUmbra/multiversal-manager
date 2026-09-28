@@ -76,6 +76,14 @@ jobs:
       - name: Install dependencies
         run: pip install -r requirements.txt "flet==1.0.1" "flet-cli==1.0.1"
 
+      # The Android SDK packages flet build needs (its own installer can stop partway)
+      - name: Install the Android SDK packages
+        shell: bash
+        run: |
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager.bat"
+          yes | "$sdkmanager" --licenses > /dev/null || true
+          "$sdkmanager" "platform-tools" "platforms;android-35" "build-tools;34.0.0"
+
       # The release key comes from the repository's secrets (ANDROID_KEYSTORE_BASE64 and
       # ANDROID_KEYSTORE_PASSWORD); every APK has to be signed with it to install as an update
       - name: Build the Android app

@@ -85,10 +85,11 @@ def signing():
 
 def build():
     version = os.environ.get("APP_VERSION")
-    flet = Path(sys.executable).with_name("flet.exe" if os.name == "nt" else "flet")
     # 64-bit ARM only: every mainstream phone of recent years, at about a third of the size.
     # Leaves out old 32-bit phones and x86 (emulators, a few Chromebooks).
-    command = [str(flet), "build", "apk", str(STAGE), "--output", str(MOBILE / "build" / "apk"),
+    # Flet's command line through this Python, since where its `flet` command lands differs
+    # (next to python.exe in a venv, in a Scripts folder beside it on GitHub's machines)
+    command = [sys.executable, "-m", "flet_cli.cli", "build", "apk", str(STAGE), "--output", str(MOBILE / "build" / "apk"),
                "--arch", "arm64-v8a", "--yes"]
     if version:
         command += ["--build-version", version, "--build-number", str(build_number(version))]
