@@ -14,11 +14,26 @@ from importer import SECTIONS
 KINDS = {"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
 SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
                   "Sideboard": "Sideboard", "Maybeboard": "Maybeboard", "": "Cards"}
-RED = ft.Colors.RED_400
+MUTED = ft.Colors.ON_SURFACE_VARIANT
 
 
 def _money(value):
     return f"${value:,.2f}" if value is not None else "—"
+
+
+def _plural(n, word):
+    return f"{n} {word}{'' if n == 1 else 's'}"
+
+
+def _box(controls, bgcolor=ft.Colors.SURFACE_CONTAINER_HIGH):
+    # A rounded panel that sets a group of lines apart from the rest of the page
+    return ft.Container(ft.Column(controls, spacing=8, tight=True), bgcolor=bgcolor, border_radius=12, padding=12)
+
+
+def _warning(text, color=None, icon=ft.Icons.WARNING_AMBER_ROUNDED):
+    # A line with a red icon; the text is red too when color is given (a card breaking a rule)
+    return ft.Row([ft.Icon(icon, color=ft.Colors.ERROR, size=18), ft.Text(text, color=color, expand=True)],
+                  vertical_alignment=ft.CrossAxisAlignment.START, spacing=8)
 
 
 def _number(field):
@@ -61,7 +76,7 @@ class Decks:
             title=ft.Text(l["name"]),
             subtitle=ft.Text(" · ".join([KINDS.get(l["kind"], l["kind"]),
                                          *([formats.label(l["format"])] if l["kind"] == "deck" else []),
-                                         f"{l['cards']} cards"])),
+                                         _plural(l["cards"], "card")])),
             trailing=ft.Text(_money(l["value"])), on_click=lambda e, l=l: self.open(l["id"]))
             for l in db.get_lists()]
         self.view.controls = [ft.ListView(tiles or [ft.Text("No decks yet. Tap + to make one.")], expand=True)]
@@ -114,20 +129,18 @@ class Decks:
 
         cards = sum(e["quantity"] for e in entries)
         value = sum(e["quantity"] * (e["price"] or 0) for e in entries)
-        summary = [f"{cards} cards · {_money(value)}"]
-        if is_deck:
-            summary.append(formats.label(info["format"]))
-            types = formats.type_counts(entries)
-            if types:
-                summary.append(" · ".join(f"{n} {t}" for t, n in types.items()))
-        controls = [
-            ft.Row([ft.IconButton(ft.Icons.ARROW_BACK, tooltip="All lists", on_click=back),
-                    ft.Text(info["name"], size=20, weight=ft.FontWeight.BOLD, expand=True),
-                    ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
-                                  on_click=lambda e: self.edit_list(info))]),
-            *[ft.Text(line) for line in summary],
-            *[ft.Text(p, color=RED) for p in problems],
-        ]
+        facts = [_plural(cards, "card"), _money(value), *([formats.label(info["format"])] if is_deck else [])]
+        types = formats.type_counts(entries) if is_deck else {}
+        controls = [ft.Row([
+            ft.IconButton(ft.Icons.ARROW_BACK, tooltip="All lists", on_click=back),
+            ft.Column([ft.Text(info["name"], size=20, weight=ft.FontWeight.BOLD),
+                       ft.Text(" · ".join(facts), color=MUTED),
+                       *([ft.Text(" · ".join(f"{n} {t}" for t, n in types.items()), size=13, color=MUTED)]
+                         if types else [])], spacing=2, expand=True),
+            ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
+                          on_click=lambda e: self.edit_list(info))], vertical_alignment=ft.CrossAxisAlignment.START)]
+        if problems:
+            controls.append(_box([_warning(p) for p in problems]))
         if is_deck and formats.FORMATS.get(info["format"], formats.FORMATS["casual"]).commander:
             controls.append(self.bracket_panel(info, entries))
 
@@ -138,19 +151,23 @@ class Decks:
             group = [e for e in entries if e["section"] == section]
             if not group and not (is_deck and section == "Main"):
                 continue
-            controls.append(ft.Text(f"{SECTION_TITLES.get(section, section)} ({sum(e['quantity'] for e in group)})",
-                                    weight=ft.FontWeight.BOLD))
+            controls += [ft.Divider(height=1),
+                         ft.Text(f"{SECTION_TITLES.get(section, section)} ({sum(e['quantity'] for e in group)})",
+                                 weight=ft.FontWeight.BOLD)]
             for e in group:
                 status = statuses.get(e["id"])
                 have = owned.get(e["name"].lower(), 0)
                 controls.append(ft.ListTile(
-                    title=ft.Text(f"{e['quantity']}× {e['name']}", color=RED if status else None),
-                    subtitle=ft.Text(status or e["type_line"] or "", color=RED if status else None),
-                    trailing=ft.Text(f"own {have}" if have else "not owned"), dense=True,
+                    title=ft.Text(f"{e['quantity']}× {e['name']}"),
+                    subtitle=(_warning(status, ft.Colors.ERROR, ft.Icons.ERROR_OUTLINE) if status
+                              else ft.Text(e["type_line"] or "", color=MUTED)),
+                    trailing=ft.Text(f"{have} owned" if have else "not owned", size=12,
+                                     color=ft.Colors.PRIMARY if have else MUTED),
+                    dense=True, content_padding=ft.Padding.symmetric(horizontal=4),
                     on_click=lambda ev, e=e: self.edit_entry(e, is_deck)))
         if not entries:
-            controls.append(ft.Text("No cards yet. Tap + to add some."))
-        self.view.controls = [ft.ListView(controls, expand=True)]
+            controls.append(ft.Text("No cards yet. Tap + to add some.", color=MUTED))
+        self.view.controls = [ft.ListView(controls, expand=True, spacing=4, padding=ft.Padding.symmetric(horizontal=4))]
         self.page.update()
 
     def bracket_panel(self, info, entries):
@@ -159,7 +176,7 @@ class Decks:
         low = report.minimum()
         fits = {1: "Bracket 1 or 2 (Exhibition or Core: that's down to the deck's intent)",
                 4: "Bracket 4 or 5 (Optimized or cEDH: that's down to the deck's intent)"}.get(low, brackets.label(low))
-        target = ft.Dropdown(label="Aiming for", value=str(info["bracket"] or ""), options=[
+        target = ft.Dropdown(label="Aiming for", value=str(info["bracket"] or ""), dense=True, options=[
             ft.DropdownOption(key="", text="No bracket chosen"),
             *[ft.DropdownOption(key=str(b.number), text=brackets.label(b.number)) for b in brackets.BRACKETS]])
 
@@ -168,17 +185,22 @@ class Decks:
             self.show_list()
 
         target.on_select = aim
-        lines = [ft.Text(f"These cards fit {fits}.", weight=ft.FontWeight.BOLD)]
-        if info["bracket"]:
-            lines += [ft.Text(f"{why}: {', '.join(names)}", color=RED) for why, names in report.broken(info["bracket"])]
         found = [("Game Changers", report.game_changers), ("Mass land denial", report.mass_land_denial),
                  ("Extra turns", report.extra_turns)]
         if spellbook is not None:
             found.append(("Two-card combos", [f"{' + '.join(c.cards)} ({c.results})" for c in report.combos]))
-        lines += [ft.Text(f"{title}: {', '.join(names) or 'none'}", size=13) for title, names in found]
+        lines = [ft.Text("Bracket", weight=ft.FontWeight.BOLD), ft.Container(target, padding=ft.Padding.only(top=6)),
+                 ft.Text(f"These cards fit {fits}.")]
+        if info["bracket"]:
+            lines += [_warning(f"{why}: {', '.join(names)}", ft.Colors.ERROR, ft.Icons.ERROR_OUTLINE)
+                      for why, names in report.broken(info["bracket"])]
+        lines += [ft.Row([ft.Text(title, color=MUTED, size=13, width=130),
+                          ft.Text(", ".join(names) or "none", size=13, expand=True)],
+                         vertical_alignment=ft.CrossAxisAlignment.START) for title, names in found]
         if spellbook is None:
-            lines.append(ft.TextButton("Check for combos (Commander Spellbook)", on_click=self.check_combos))
-        return ft.Column([target, *lines], tight=True)
+            lines.append(ft.OutlinedButton("Check for combos (Commander Spellbook)", icon=ft.Icons.SEARCH,
+                                           on_click=self.check_combos))
+        return _box(lines)
 
     def check_combos(self, e):
         entries = db.get_list_entries(self.list_id)
