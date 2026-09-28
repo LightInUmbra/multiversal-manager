@@ -1,0 +1,14 @@
+# Read by `flet build` (via build_apk.py, which stages this folder with the shared modules)
+[project]
+name = "multiversal-manager"
+version = "1.0.0"
+description = "Your Magic: The Gathering collection, synced with the desktop app"
+requires-python = ">=3.10"
+dependencies = ["flet==1.0.1", "requests>=2.31"]
+
+[tool.flet]
+product = "Multiversal Manager"
+org = "io.github.lightinumbra"
+company = "Umbra Ortiz"
+# The app's permanent Android id: phones treat an app with a different one as a different app
+bundle_id = "io.github.lightinumbra.multiversalmanager"

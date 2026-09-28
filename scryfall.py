@@ -31,7 +31,9 @@ BASE_DIR = Path(__file__).resolve().parent
 # ScryFunctions does `import classes.card`, so the Magic-Projects root has to be importable
 # (the built app has it bundled already)
 _MAGIC_PROJECTS = BASE_DIR / "external" / "Magic-Projects"
-if not getattr(sys, "frozen", False) and not (_MAGIC_PROJECTS / "Functions" / "ScryFunctions.py").exists():
+# (A folder check: a submodule that was never fetched is an empty folder, and the phone app
+# ships compiled .pyc files only, so there's no ScryFunctions.py to look for)
+if not getattr(sys, "frozen", False) and not (_MAGIC_PROJECTS / "Functions").is_dir():
     raise ImportError(
         "Magic-Projects submodule is missing. Run: git submodule update --init"
     )

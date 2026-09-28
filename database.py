@@ -18,7 +18,10 @@ def _data_dir():
     finds the same collection wherever it's launched from:
     - from source: next to this file
     - the portable build (PORTABLE_MARKER beside the .exe, e.g. on a USB stick): next to the .exe
-    - the installed build: the user's local app data folder, which is always writable"""
+    - the installed build: the user's local app data folder, which is always writable
+    - the phone app (mobile/): the app's own storage, which Flet names in FLET_APP_STORAGE_DATA"""
+    if os.environ.get("FLET_APP_STORAGE_DATA"):
+        return Path(os.environ["FLET_APP_STORAGE_DATA"])
     if not getattr(sys, "frozen", False):
         return Path(__file__).resolve().parent
     app_dir = Path(sys.executable).resolve().parent

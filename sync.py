@@ -11,6 +11,7 @@
 # both sides goes to the newer edit. Afterwards, copies that turn out to be the same card
 # (added on two devices) become one entry, the way adding a card twice does.
 import json
+import time
 
 import requests
 
@@ -72,6 +73,23 @@ def local_changes(conn):
         records.append({"tbl": row["tbl"], "uid": row["uid"], "updated_at": row["deleted_at"], "deleted": True,
                         "data": None})
     return records
+
+
+def has_local_changes(conn):
+    """Whether anything here still needs pushing: only local queries, cheap enough to ask every few seconds"""
+    for table in TABLES:
+        if conn.execute(f"SELECT 1 FROM {table} t LEFT JOIN sync_shadow s ON s.tbl = ? AND s.uid = t.uid "
+                        "WHERE s.updated_at IS NOT t.updated_at LIMIT 1", (table,)).fetchone():
+            return True
+    return conn.execute("SELECT 1 FROM sync_tombstones t LEFT JOIN sync_shadow s ON s.tbl = t.tbl "
+                        "AND s.uid = t.uid WHERE s.updated_at IS NOT t.deleted_at LIMIT 1").fetchone() is not None
+
+
+# How often the apps sync on their own while signed in: soon after an edit, and now and
+# then to bring in other devices' changes
+EDIT_DELAY = 2  # seconds
+PULL_EVERY = 10  # seconds
+RETRY_AFTER = 60  # seconds, after a failed sync (e.g. no internet)
 
 
 def merge(base, mine, theirs, mine_newer):
@@ -261,21 +279,31 @@ def sign_up(email, password):
 
 
 class SupabaseRemote:
-    """The remote for sync(). Signing in again uses up refresh_token, so save
-    self.refresh_token (its replacement) afterwards."""
+    """The remote for sync(). Keep one around between syncs: it signs in when first used and
+    again shortly before that expires (an hour), not on every sync. Signing in again uses up
+    refresh_token, so save self.refresh_token (its replacement) after each sync."""
 
     def __init__(self, refresh_token):
-        session = _auth("refresh_token", {"refresh_token": refresh_token})
+        self.refresh_token = refresh_token
+        self._headers, self._expires = None, 0.0
+
+    def _signed_in(self):
+        if time.time() < self._expires - 60:
+            return self._headers
+        session = _auth("refresh_token", {"refresh_token": self.refresh_token})
         self.refresh_token = session["refresh_token"]
-        self.email = session["user"]["email"]
+        self._expires = time.time() + session.get("expires_in", 3600)
         self._headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {session['access_token']}"}
+        return self._headers
 
     def push(self, records, batch=500):
+        self._signed_in()
         for start in range(0, len(records), batch):
             _check(requests.post(f"{SUPABASE_URL}/rest/v1/rpc/push_records", headers=self._headers,
                                  json={"records": records[start:start + batch]}, timeout=TIMEOUT))
 
     def pull(self, cursor):
+        self._signed_in()
         records, cursor = [], int(cursor or 0)
         while True:
             page = _check(requests.get(f"{SUPABASE_URL}/rest/v1/records", headers=self._headers, timeout=TIMEOUT,

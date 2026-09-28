@@ -2,6 +2,7 @@
 import csv
 import sqlite3
 import sys
+import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -103,6 +104,9 @@ class MainWindow(QMainWindow):
         self._refreshing = False
         self._quiet_refresh = False
         self._syncing = False
+        self._sync_failed = False
+        self._last_sync = float("-inf")  # time.monotonic() of the last sync started
+        self._remote = None  # the signed-in sync.SupabaseRemote, once used
         self.settings = finance._settings()
 
         self._build_menu()
@@ -272,6 +276,10 @@ class MainWindow(QMainWindow):
         # Once a day, quietly, in the background
         background.run(backup.daily_backup, self._keep_tracked_history(),
                        on_success=lambda _: None, on_error=self._on_backup_failed)
+        # While signed in, sync on its own: shortly after an edit anywhere (collection, decks,
+        # sealed, imports…) and every couple of minutes to bring in other devices' changes
+        self._sync_timer = QTimer(self, interval=sync.EDIT_DELAY * 1000, timeout=self._auto_sync)
+        self._sync_timer.start()
         self.sync_now(quiet=True)
 
     def _build_menu(self):
@@ -359,8 +367,19 @@ class MainWindow(QMainWindow):
 
     # Sync
 
+    def _auto_sync(self):
+        if self._syncing or scryfall.offline or not self.settings.value("sync_token", ""):
+            return
+        waited = time.monotonic() - self._last_sync
+        if self._sync_failed and waited < sync.RETRY_AFTER:
+            return
+        with db._connect() as conn:
+            changed = sync.has_local_changes(conn)
+        if changed or waited >= sync.PULL_EVERY:
+            self.sync_now(quiet=True)
+
     def sync_now(self, quiet=False):
-        # quiet: the sync on startup, which only reports in the status bar
+        # quiet: a sync the app starts itself, which only reports in the status bar
         if not self.settings.value("sync_token", ""):
             if not quiet:
                 self.sync_account()
@@ -370,8 +389,13 @@ class MainWindow(QMainWindow):
                 QMessageBox.information(self, "Sync", "Syncing needs the internet. Turn off Work Offline first.")
             return
         self._syncing = True
-        self.statusBar().showMessage("Syncing…")
-        background.run(_sync_with, self.settings.value("sync_token"),
+        self._last_sync = time.monotonic()
+        if not quiet:
+            self.statusBar().showMessage("Syncing…")
+        # One session kept between syncs, so syncing every few seconds doesn't sign in every time
+        if self._remote is None:
+            self._remote = sync.SupabaseRemote(self.settings.value("sync_token"))
+        background.run(_sync_with, self._remote,
                        on_success=lambda result: self._on_synced(result, quiet),
                        on_error=lambda message: self._on_sync_failed(message, quiet))
 
@@ -382,15 +406,19 @@ class MainWindow(QMainWindow):
             self._on_sync_failed(error, quiet)
             return
         self._syncing = False
+        self._sync_failed = False
         if applied:
             self.populate_table()
             self.sealed_panel.reload()
             self.show_selected_card()
+        if quiet and not (pushed or applied):
+            return
         self.statusBar().showMessage(f"Synced: sent {_count(pushed, 'change')}, "
                                      f"received {_count(applied, 'change')}.", 8000)
 
     def _on_sync_failed(self, message, quiet):
         self._syncing = False
+        self._sync_failed = True
         self.statusBar().showMessage(f"Sync failed: {message}", 15000)
         if not quiet:
             QMessageBox.warning(self, "Sync", f"Couldn't sync:\n{message}\n\n"
@@ -404,6 +432,7 @@ class MainWindow(QMainWindow):
                 "collection; it just stops syncing with your other devices.")
             if answer == QMessageBox.StandardButton.Yes:
                 self.settings.remove("sync_token")
+                self._remote = None
             return
 
         dialog = QDialog(self)
@@ -431,6 +460,7 @@ class MainWindow(QMainWindow):
                 return
             self.settings.setValue("sync_token", token)
             self.settings.setValue("sync_email", email_input.text().strip())
+            self._remote = None
             dialog.accept()
             self.sync_now()
 
@@ -890,10 +920,9 @@ class MainWindow(QMainWindow):
         ))
 
 
-def _sync_with(token):
+def _sync_with(remote):
     # Runs on a worker thread. Signing in replaces the saved token, so the new one comes back
     # even when the sync itself fails; otherwise the next try would be signed out.
-    remote = sync.SupabaseRemote(token)
     try:
         return (remote.refresh_token, *sync.sync(remote), None)
     except Exception as error:

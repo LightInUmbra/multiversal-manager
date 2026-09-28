@@ -227,6 +227,54 @@ def test_restored_backup_wins_on_every_device(devices, tmp_path):
     assert _cards() == {("Sol Ring", 2), ("Arcane Signet", 1)}
 
 
+def test_knows_when_something_is_waiting_to_sync(devices):
+    on, remote = devices
+
+    def waiting():
+        with db._connect() as conn:
+            return sync.has_local_changes(conn)
+
+    card = on("pc").add_card("Sol Ring", "C21", 1.0, 1, scryfall_id="a")
+    assert waiting()
+    sync.sync(remote)
+    assert not waiting()
+    db.update_prices([(card, 2.0)])  # a price refresh isn't an edit
+    assert not waiting()
+    _tick()
+    db.update_quantity(card, 3)
+    assert waiting()
+    sync.sync(remote)
+    db.remove_card(card)
+    assert waiting()
+    sync.sync(remote)
+    assert not waiting()
+
+
+def test_supabase_signs_in_once_per_session(monkeypatch):
+    sign_ins = []
+
+    def fake_auth(grant, payload):
+        sign_ins.append(payload["refresh_token"])
+        return {"refresh_token": f"token{len(sign_ins)}", "access_token": "access", "expires_in": 3600}
+
+    class Empty:
+        ok, content = True, b"[]"
+
+        def json(self):
+            return []
+
+    monkeypatch.setattr(sync, "_auth", fake_auth)
+    monkeypatch.setattr(sync.requests, "get", lambda *a, **k: Empty())
+    remote = sync.SupabaseRemote("token0")
+    for _ in range(5):
+        remote.pull(None)
+    assert sign_ins == ["token0"] and remote.refresh_token == "token1"
+
+    remote._expires = time.time() + 30  # about to run out
+    remote.pull(None)
+    assert sign_ins == ["token0", "token1"] and remote.refresh_token == "token2"
+
+
 def test_merge_rules():
     base = {"quantity": 2, "notes": "", "condition": "NM"}
     assert sync.merge(base, {**base, "quantity": 4}, {**base, "quantity": 3}, True)["quantity"] == 5
