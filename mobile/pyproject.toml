@@ -4,7 +4,7 @@ name = "multiversal-manager"
 version = "1.0.0"
 description = "Your Magic: The Gathering collection, synced with the desktop app"
 requires-python = ">=3.10"
-dependencies = ["flet==1.0.1", "requests>=2.31"]
+dependencies = ["flet==1.0.1", "requests>=2.31", "pypdf>=4"]
 
 [tool.flet]
 product = "Multiversal Manager"

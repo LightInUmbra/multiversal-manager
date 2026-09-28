@@ -28,24 +28,17 @@ from PySide6.QtWidgets import (
     QTreeWidgetItem, QTextBrowser, QProgressBar, QStackedWidget, QCompleter, QPlainTextEdit, QButtonGroup,
 )
 
+import ask as asking
 import background
 import brackets
 import database as db
 import finance
 import formats
-import judge
 import rules
 import scryfall
 import set_notes
 
 ROLE = Qt.ItemDataRole.UserRole
-# How closely a verified ruling has to match a question to be given as its answer; a looser
-# match is offered as "the closest verified ruling"
-CONFIDENT_MATCH = 0.45
-# Shared words can't tell situations apart ("+2/+2 until end of turn" then damage, or then
-# flickered), so an answer worked out from the question's own details beats any verified
-# ruling that isn't nearly the same question
-NEAR_EXACT_MATCH = 0.8
 SIMPLE, NERDS = "simple", "nerds"
 SEARCH_RESULTS = 150
 PAGE_STYLE = """
@@ -678,24 +671,14 @@ class RulesWindow(QWidget):
             self.ask_page.setHtml(PAGE_STYLE + "<p class='muted'>The rules haven't been downloaded yet. Use Check "
                                   "for Updates while you're online.</p>")
             return
-        terms = [term for term, _ in cr.glossary] + list(cr.keywords())
-        named = {name: db.card_info(name) for name in rules.mentioned_cards(question, card_names(), terms)}
-        cards = [(name, info["oracle_text"], [r["comment"] for r in db.card_rulings(name)])
-                 for name, info in named.items()]
-        matches = rules.similar_interactions(question, library())
-        creatures = {name: judge.creature_from_card(name, info, cr.keywords()) for name, info in named.items()
-                     if "Creature" in (info["type_line"] or "")}
-        worked = (judge.answer_brackets(question, named) or judge.answer_tokens(question, named)
-                  or judge.answer_combat(question, creatures)
-                  or judge.answer_timing(question, named) or judge.answer_state(question, named))
-        guides = rules.guides_for(question + "\n" + "\n".join(text or "" for _, text, _ in cards), library())
-        passages = [p for p in rules.find_rules(question, cr, cards, budget=24000) if p.kind in ("rule", "glossary")]
+        found = asking.look_up(question, cr, library(), card_names())
+        cards, matches, worked = found.cards, found.matches, found.worked
+        guides, passages, verified = found.guides, found.passages, found.verified
 
         index_of = {g["title"]: i for i, g in enumerate(library()["concepts"])}
         concept_links = ", ".join(f"<a href='concept:{index_of[g['title']]}'>{html.escape(g['title'])}</a>"
                                   for g in guides[:3])
         short = False     # a worked-out answer short enough to show in full in the answer card
-        verified = bool(matches) and matches[0][0] >= (NEAR_EXACT_MATCH if worked else CONFIDENT_MATCH)
         if verified:
             entry = matches[0][1]
             rule_links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in entry["rules"])
@@ -828,63 +811,38 @@ class RulesWindow(QWidget):
         needle = self.search_input.text().strip()
         if len(needle) < 3:
             return
-        words = needle.lower().split()
-        results = []
-
-        def hit(text):
-            text = text.lower()
-            return all(word in text for word in words)
-
-        def snippet(text):
-            at = max(0, text.lower().find(words[0]) - 80)
-            return ("…" if at else "") + text[at:at + 260] + ("…" if len(text) > at + 260 else "")
-
-        cr = comprehensive_rules()
-        if cr:
-            for term, definition in cr.glossary:
-                if hit(term + " " + definition):
-                    results.append(f"<p><b>Glossary: <a href='gloss:{html.escape(term)}'>{html.escape(term)}</a></b>"
-                                   f"<br>{link_rules(snippet(definition))}</p>")
-            for section in cr.sections:
-                for chapter in section.chapters:
-                    for rule in chapter.rules:
-                        if rule.id.startswith(needle) or hit(rule.text + " " + " ".join(rule.examples)):
-                            results.append(f"<p><a href='rule:{rule.id}' class='id'>{rule.id}</a> "
-                                           f"<span class='muted'>({html.escape(chapter.title)})</span><br>"
-                                           f"{link_rules(snippet(rule.text))}</p>")
-        for key in ("mtr", "ipg", "jar"):
-            for index, part in enumerate(document_parts(key)):
-                if hit(part.title + " " + part.text):
-                    results.append(f"<p><a href='doc:{key}:{index}'><b>{rules.DOCUMENTS[key][0]} "
-                                   f"{part.heading} {html.escape(part.title)}</b></a><br>"
-                                   f"{link_rules(snippet(part.text))}</p>")
-        # Set notes and MTG Wiki pages: the first line in each that matches
-        source = {"release": "Release Notes", "faq": "Set FAQ", "mechanic": "MTG Wiki", "set": "MTG Wiki"}
-        for note_id, info, content, lower in searchable_notes():
-            if all(word in lower for word in words):
-                line = next((l for l in content.split("\n") if hit(l)), None)
-                if line:
-                    results.append(f"<p><a href='note:{note_id}'><b>{source[info['kind']]}: "
-                                   f"{html.escape(info['title'])}</b></a><br>{link_rules(snippet(line))}</p>")
-        for key in ("commander", "brawl", "oathbreaker"):
-            if rules.text(key) and hit(rules.text(key)):
-                results.append(f"<p><a href='format:{key}'><b>{rules.DOCUMENTS[key][0]} format rules</b></a><br>"
-                               f"{link_rules(snippet(rules.text(key)))}</p>")
-        about_brackets = " ".join([b.name + " " + b.decks + " " + " ".join(b.limits) for b in brackets.BRACKETS]
-                                  + [term + " " + text for term, text in brackets.TERMS])
-        if hit("commander brackets " + about_brackets):
-            results.append(f"<p><a href='brackets:'><b>Commander Brackets</b></a><br>"
-                           f"{html.escape(snippet(about_brackets))}</p>")
-        found = [(i, g) for i, g in enumerate(library()["concepts"]) if hit(g["title"] + " " + " ".join(g["summary"]))]
-        interactions = [e for e in library()["interactions"] if hit(e["question"] + " " + e["explanation"])]
-        results = ([f"<p><a href='concept:{i}'><b>Game Concept: {html.escape(g['title'])}</b></a><br>"
-                    f"{link_rules(snippet(' '.join(g['summary'])))}</p>" for i, g in found]
-                   + [self._interaction(e) for e in interactions] + results)
+        found = rules.search(needle, comprehensive_rules(), library(), document_parts, searchable_notes())
+        results = [self._search_result(f) for f in found]
         shown = results[:SEARCH_RESULTS]
         more = f" (showing the first {SEARCH_RESULTS})" if len(results) > SEARCH_RESULTS else ""
         self.tree.setCurrentItem(None)
         self.show_page(f"<h1>“{html.escape(needle)}”</h1><p class='muted'>{len(results)} matches{more}</p>"
                        + ("".join(shown) or "<p>Nothing matches.</p>"))
+
+    def _search_result(self, f):
+        # One of rules.search()'s results, as a paragraph of the results page
+        kind, key, title, snippet = f["kind"], f["key"], f["title"], f["snippet"]
+        if kind == "concept":
+            return (f"<p><a href='concept:{key}'><b>Game Concept: {html.escape(title)}</b></a><br>"
+                    f"{link_rules(snippet)}</p>")
+        if kind == "interaction":
+            return self._interaction(key)
+        if kind == "glossary":
+            return (f"<p><b>Glossary: <a href='gloss:{html.escape(title)}'>{html.escape(title)}</a></b>"
+                    f"<br>{link_rules(snippet)}</p>")
+        if kind == "rule":
+            return (f"<p><a href='rule:{key}' class='id'>{key}</a> "
+                    f"<span class='muted'>({html.escape(f['chapter'])})</span><br>{link_rules(snippet)}</p>")
+        if kind == "doc":
+            doc, index = key
+            return (f"<p><a href='doc:{doc}:{index}'><b>{rules.DOCUMENTS[doc][0]} {f['heading']} "
+                    f"{html.escape(title)}</b></a><br>{link_rules(snippet)}</p>")
+        if kind == "note":
+            return (f"<p><a href='note:{key}'><b>{f['label']}: {html.escape(title)}</b></a><br>"
+                    f"{link_rules(snippet)}</p>")
+        if kind == "format":
+            return f"<p><a href='format:{key}'><b>{title}</b></a><br>{link_rules(snippet)}</p>"
+        return f"<p><a href='brackets:'><b>{title}</b></a><br>{html.escape(snippet)}</p>"
 
     # Card Rulings
 

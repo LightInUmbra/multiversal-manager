@@ -27,6 +27,7 @@ from pathlib import Path
 
 import requests
 
+import brackets
 import database as db
 import scryfall
 
@@ -307,10 +308,11 @@ def due(today=None):
                for key in [*DOCUMENTS, "rulings"])
 
 
-def update(progress=None):
+def update(progress=None, notes=True):
     """Downloads whatever's missing or has a newer version: every document, and the card
-    rulings. Returns (titles of what changed, errors). Anything that fails to download
-    keeps its saved copy."""
+    rulings, plus (with notes) every set's notes and MTG Wiki's pages, which the phone app
+    leaves for later. Returns (titles of what changed, errors). Anything that fails to
+    download keeps its saved copy."""
     scryfall._require_online()
     changed, errors = [], []
     total = len(DOCUMENTS) + 1
@@ -367,6 +369,8 @@ def update(progress=None):
         return info["updated_at"], None
     attempt("rulings", total, rulings)
 
+    if not notes:
+        return changed, errors
     # Every set's notes and MTG Wiki's mechanic and set pages (see set_notes.py)
     import set_notes  # here: it builds on this module
     cr = parse_cr(text("cr")) if text("cr") else None
@@ -659,10 +663,33 @@ def _content_words(text):
     return {w for w in _TOKEN.findall(text.lower()) if w not in _QUESTION_STOPWORDS and len(w) > 2}
 
 
+# "Without reach" and "with reach" share every other word, so a word negated in one question
+# and plainly there in the other means they ask opposite things. (A negation that just describes
+# the situation, like "it wasn't blocked", clashes with nothing when the other doesn't mention it.)
+_NEGATED_WORD = re.compile(r"\b(?:not|no|without|never|cannot|\w+n't)\s+(?:(?:a|an|the|have|has|be|any)\s+)?([a-z0-9+/-]+)")
+# How much a question asked the other way round counts: never enough to be given as its answer
+NEGATION_MISMATCH = 0.4
+
+
+def _negations(text):
+    # (words negated in text, words it has plainly)
+    text = text.lower().replace("’", "'")
+    negated = set(_NEGATED_WORD.findall(text))
+    plain = _content_words(_NEGATED_WORD.sub(" ", text))
+    # A word it has both ways ("with flying … doesn't have flying") takes no side
+    return negated - plain, plain - negated
+
+
+def _asked_the_other_way(question, other):
+    (negated_q, plain_q), (negated_o, plain_o) = _negations(question), _negations(other)
+    return bool(negated_q & plain_o or negated_o & plain_q)
+
+
 def similar_interactions(question, library, limit=3, threshold=0.25):
     """The library's verified interactions closest to a question: [(score 0-1, entry)],
     best first. Words they share count by how rare they are in the library ("ninjutsu"
-    says more than "attack"), and so do game concepts they share."""
+    says more than "attack"), and so do game concepts they share. A question asked the
+    other way round ("without reach" for "with reach") counts for half."""
     entries = library["interactions"]
     words_of = [_content_words(e["question"]) | {f"concept:{c}" for c in concepts_in(e["question"])}
                 for e in entries]
@@ -674,6 +701,8 @@ def similar_interactions(question, library, limit=3, threshold=0.25):
     for entry, words in zip(entries, words_of):
         shared = sum(idf[w] for w in asked & words)
         score = shared / math.sqrt(asked_weight * sum(idf[w] for w in words))
+        if _asked_the_other_way(question, entry["question"]):
+            score *= NEGATION_MISMATCH
         if score >= threshold:
             scored.append((round(score, 2), entry))
     return sorted(scored, key=lambda s: -s[0])[:limit]
@@ -720,3 +749,59 @@ def keyword_rules(card_text, keywords):
              if not (rule_id.startswith("701") and keyword in _COMMON_ACTIONS)
              and re.search(rf"\b{re.escape(keyword)}\b", card_text, re.IGNORECASE)]
     return sorted(found, key=lambda kv: [int(n) for n in kv[1].split(".")])
+
+
+# Searching everything
+
+NOTE_SOURCES = {"release": "Release Notes", "faq": "Set FAQ", "mechanic": "MTG Wiki", "set": "MTG Wiki"}
+
+
+def search(needle, cr, library, document_parts, notes=()):
+    """Everything with every word of needle in it, in the order the Rules window lists them:
+    Game Concepts, verified rulings, the glossary, rules (also by number: "702.1"), the
+    tournament documents, set notes and MTG Wiki pages, format rules and Commander Brackets.
+    Each result is a dict: kind and key (what it opens), title and snippet, plus chapter (a
+    rule's), heading (a document part's) or label (a note's source). document_parts(key) gives
+    a tournament document's parts; notes are (id, info, text, lowercased text)."""
+    words = needle.lower().split()
+
+    def hit(text):
+        text = text.lower()
+        return all(word in text for word in words)
+
+    def snippet(text):
+        at = max(0, text.lower().find(words[0]) - 80)
+        return ("…" if at else "") + text[at:at + 260] + ("…" if len(text) > at + 260 else "")
+
+    found = [{"kind": "concept", "key": i, "title": g["title"], "snippet": snippet(" ".join(g["summary"]))}
+             for i, g in enumerate(library["concepts"]) if hit(g["title"] + " " + " ".join(g["summary"]))]
+    found += [{"kind": "interaction", "key": e, "title": e["question"], "snippet": e["explanation"]}
+              for e in library["interactions"] if hit(e["question"] + " " + e["explanation"])]
+    if cr:
+        found += [{"kind": "glossary", "key": term, "title": term, "snippet": snippet(definition)}
+                  for term, definition in cr.glossary if hit(term + " " + definition)]
+        found += [{"kind": "rule", "key": rule.id, "title": rule.id, "chapter": chapter.title,
+                   "snippet": snippet(rule.text)}
+                  for section in cr.sections for chapter in section.chapters for rule in chapter.rules
+                  if rule.id.startswith(needle) or hit(rule.text + " " + " ".join(rule.examples))]
+    for key in ("mtr", "ipg", "jar"):
+        found += [{"kind": "doc", "key": (key, index), "title": part.title, "heading": part.heading,
+                   "snippet": snippet(part.text)}
+                  for index, part in enumerate(document_parts(key)) if hit(part.title + " " + part.text)]
+    # Set notes and MTG Wiki pages: the first line in each that matches
+    for note_id, info, content, lower in notes:
+        if all(word in lower for word in words):
+            line = next((l for l in content.split("\n") if hit(l)), None)
+            if line:
+                found.append({"kind": "note", "key": note_id, "title": info["title"],
+                              "label": NOTE_SOURCES[info["kind"]], "snippet": snippet(line)})
+    for key in ("commander", "brawl", "oathbreaker"):
+        if text(key) and hit(text(key)):
+            found.append({"kind": "format", "key": key, "title": f"{DOCUMENTS[key][0]} format rules",
+                          "snippet": snippet(text(key))})
+    about_brackets = " ".join([b.name + " " + b.decks + " " + " ".join(b.limits) for b in brackets.BRACKETS]
+                              + [term + " " + text for term, text in brackets.TERMS])
+    if hit("commander brackets " + about_brackets):
+        found.append({"kind": "brackets", "key": None, "title": "Commander Brackets", "snippet": snippet(about_brackets)})
+    return found
+

@@ -227,6 +227,13 @@ def oracle_record(data):
     }
 
 
+def card_name_catalog():
+    # Every card name Scryfall knows (about 1 MB), so the phone app can recognize cards in a
+    # rules question without the whole card database
+    _require_online()
+    return _get_json("/catalog/card-names")["data"]
+
+
 def fetch_card_data(names):
     """Card database rows (see oracle_record) for these card names, looked up on Scryfall: the
     phone app's way to know a deck's cards without downloading the whole card database.

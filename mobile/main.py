@@ -16,6 +16,7 @@ import flet as ft  # noqa: E402
 import copy_details  # noqa: E402
 import database as db  # noqa: E402
 import decks  # noqa: E402
+import rules_tab  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
 
@@ -346,22 +347,29 @@ def main(page: ft.Page):
     collection = ft.Column([search, summary, card_list], expand=True)
     body = ft.Container(collection, expand=True)
 
+    rules_view = rules_tab.Rules(page, toast, busy)
+    # The tabs after Collection, in the bar's order; each has view, refresh() and back()
+    tabs = [deck_builder, rules_view]
+
     def switch(e):
-        on_decks = page.navigation_bar.selected_index == 1
-        body.content = deck_builder.view if on_decks else collection
-        deck_builder.refresh() if on_decks else show_cards()
+        index = page.navigation_bar.selected_index
+        body.content = tabs[index - 1].view if index else collection
+        page.floating_action_button.visible = index != 2  # nothing to add on Rules
+        tabs[index - 1].refresh() if index else show_cards()
 
     page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
         ft.NavigationBarDestination(icon=ft.Icons.STYLE_OUTLINED, label="Collection"),
-        ft.NavigationBarDestination(icon=ft.Icons.MENU_BOOK_OUTLINED, label="Decks")])
-    # Android's back button steps back through the app instead of closing it: out of a list,
-    # then from Decks to Collection, and on Collection it takes a second press to exit.
+        ft.NavigationBarDestination(icon=ft.Icons.MENU_BOOK_OUTLINED, label="Decks"),
+        ft.NavigationBarDestination(icon=ft.Icons.GAVEL_OUTLINED, label="Rules")])
+    # Android's back button steps back through the app instead of closing it: back through a
+    # tab's pages, then to Collection, and on Collection it takes a second press to exit.
     # (An open dialog closes first on its own.)
     last_back = [float("-inf")]
 
     async def on_back(e):
-        if page.navigation_bar.selected_index == 1:
-            if not deck_builder.back():
+        index = page.navigation_bar.selected_index
+        if index:
+            if not tabs[index - 1].back():
                 page.navigation_bar.selected_index = 0
                 switch(None)
             await e.control.confirm_pop(False)

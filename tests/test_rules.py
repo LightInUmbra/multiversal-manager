@@ -184,3 +184,13 @@ def test_rules_library_is_complete_and_findable():
     assert rules.similar_interactions("what is the best way to cook pasta", library) == []
     assert "APNAP order" in [g["title"] for g in rules.guides_for("in what order do triggers resolve in a 4 player "
                                                                   "game?", library)]
+
+
+def test_a_question_asked_the_other_way_round_is_not_its_answer():
+    library = {"interactions": [
+        {"question": "Can a creature with reach block a creature with flying?", "answer": "Yes"},
+        {"question": "Does ward trigger when a spell targets the creature?", "answer": "Yes"}]}
+    (score, entry), = rules.similar_interactions("Can a creature without reach block a creature with flying?", library)
+    assert entry["answer"] == "Yes" and score < 0.45  # too weak to be given as the answer
+    (score, _), = rules.similar_interactions("Can a creature with reach block a creature with flying?", library)
+    assert score == 1.0

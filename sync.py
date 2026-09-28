@@ -60,6 +60,11 @@ def _remember(conn, records):
                       for r in records])
 
 
+# A deletion still to send: the last version synced wasn't this deletion. (A deletion stamped the
+# same millisecond as the edit synced before it has the same time, so the time alone can't tell.)
+_UNSENT_DELETE = "(s.uid IS NULL OR s.data IS NOT NULL OR s.updated_at IS NOT t.deleted_at)"
+
+
 def local_changes(conn):
     """Records for every row edited or deleted here since it was last synced"""
     records = []
@@ -69,7 +74,7 @@ def local_changes(conn):
             records.append({"tbl": table, "uid": row["uid"], "updated_at": row["updated_at"], "deleted": False,
                             "data": _data(row)})
     for row in conn.execute("SELECT t.* FROM sync_tombstones t LEFT JOIN sync_shadow s "
-                            "ON s.tbl = t.tbl AND s.uid = t.uid WHERE s.updated_at IS NOT t.deleted_at"):
+                            "ON s.tbl = t.tbl AND s.uid = t.uid WHERE " + _UNSENT_DELETE):
         records.append({"tbl": row["tbl"], "uid": row["uid"], "updated_at": row["deleted_at"], "deleted": True,
                         "data": None})
     return records
@@ -82,7 +87,7 @@ def has_local_changes(conn):
                         "WHERE s.updated_at IS NOT t.updated_at LIMIT 1", (table,)).fetchone():
             return True
     return conn.execute("SELECT 1 FROM sync_tombstones t LEFT JOIN sync_shadow s ON s.tbl = t.tbl "
-                        "AND s.uid = t.uid WHERE s.updated_at IS NOT t.deleted_at LIMIT 1").fetchone() is not None
+                        "AND s.uid = t.uid WHERE " + _UNSENT_DELETE + " LIMIT 1").fetchone() is not None
 
 
 # How often the apps sync on their own while signed in: soon after an edit, and now and

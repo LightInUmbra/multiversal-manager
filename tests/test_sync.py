@@ -250,6 +250,22 @@ def test_knows_when_something_is_waiting_to_sync(devices):
     assert not waiting()
 
 
+def test_delete_in_the_same_millisecond_as_the_last_sync_still_goes(devices):
+    on, remote = devices
+    card = on("pc").add_card("Sol Ring", "C21", 1.0, 1, scryfall_id="a")
+    sync.sync(remote)
+    with db._connect() as conn:
+        stamp = conn.execute("SELECT updated_at FROM collection WHERE id = ?", (card,)).fetchone()[0]
+    db.remove_card(card)
+    with db._connect() as conn:
+        conn.execute("UPDATE sync_tombstones SET deleted_at = ?", (stamp,))  # the same millisecond
+        assert sync.has_local_changes(conn)
+        assert [r["deleted"] for r in sync.local_changes(conn)] == [True]
+    sync.sync(remote)
+    with db._connect() as conn:
+        assert not sync.has_local_changes(conn)
+
+
 def test_supabase_signs_in_once_per_session(monkeypatch):
     sign_ins = []
 
