@@ -228,3 +228,6 @@ multiversal-manager/
 
 # Claude Code personal settings
 .claude/settings.local.json
+
+# The Android app's release signing key and its password (back them up; never commit them)
+mobile/signing/

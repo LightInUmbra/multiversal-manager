@@ -1,5 +1,6 @@
 # Pushing a version tag (git tag v1.1.0 && git push origin v1.1.0) tests the code, builds
-# the installer and the portable zip on Windows, and publishes them as a GitHub Release
+# the installer and the portable zip on Windows, and publishes them as a GitHub Release,
+# then builds the Android app and adds its APK to that release
 name: Release
 
 on:
@@ -46,3 +47,51 @@ jobs:
         run: |
           gh release create "$GITHUB_REF_NAME" dist/*-setup.exe dist/*-portable.zip \
             --title "Multiversal Manager ${GITHUB_REF_NAME#v}" --generate-notes
+
+  # The Android app, added to the same release once the Windows build has made it
+  android:
+    needs: release
+    runs-on: windows-latest   # like the desktop build; it also has the Android SDK
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      # flet build downloads Flutter the first time (about 1 GB); keep it between releases
+      - uses: actions/cache@v4
+        with:
+          path: ~/flutter
+          key: flutter-${{ runner.os }}-flet-1.0.1
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt "flet==1.0.1" "flet-cli==1.0.1"
+
+      # The release key comes from the repository's secrets (ANDROID_KEYSTORE_BASE64 and
+      # ANDROID_KEYSTORE_PASSWORD); every APK has to be signed with it to install as an update
+      - name: Build the Android app
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_SIGNING_KEY_STORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          PYTHONIOENCODING: utf-8
+        run: |
+          echo "$ANDROID_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          export ANDROID_SIGNING_KEY_STORE="$RUNNER_TEMP/release.jks"
+          export APP_VERSION="${GITHUB_REF_NAME#v}"
+          python mobile/build_apk.py
+
+      - name: Add it to the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$GITHUB_REF_NAME" mobile/build/Multiversal-Manager-*.apk

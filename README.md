@@ -6,7 +6,7 @@
 
 Moxfield, Manabox, and Archidekt are all amazing tools that have shaped the way we view card prices, kept track of our collections and our decks. They do so much, but you know what they don't have (or don't have much of)? Interconnectivity. That's why I developed this: The Multiversal Manager! It's supposed to be a tool like those three, except by offering more! It offers a deck builder, finance/market tracker, and more features to come! The biggest thing of it all though? The convenience. Moxfield and Archidekt are available on the web, which is great when working on a computer; it makes a difference for mobile users though. ManaBox exists, but when you'd like to edit something, it HAS to be done via the app; not even the link can save you. That's where my tool comes in - It bridges that gap so not only do you have access to your collection and price tracking system at anytime, but you have it in your pocket, at home, and anywhere you can access a computer!
 
-Right now it's a desktop app. Web and mobile versions are on the way, and the plan is for all three to share one collection (more on that in [The Multiverse](#the-multiverse)).
+It's a desktop app and an Android app that share one collection, with a web version on the way (more on that in [The Multiverse](#the-multiverse)).
 
 ---
 
@@ -95,10 +95,10 @@ The bigger idea is a set of connected apps that all share the same collection:
 | Platform | Status |
 |---|---|
 | **Desktop** | In active development (you're looking at it) |
+| **Android** | Available: collection and prices, Deck Builder, the rules judge, and a camera card scanner |
 | **Web** | Planned |
-| **Mobile** | Planned |
 
-The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. For now the desktop app keeps everything in a local SQLite database, with the card and price logic kept separate from the interface so it can be plugged into a sync service later.
+The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.
 
 ---
 
@@ -112,6 +112,10 @@ There are two versions on the [Releases page](https://github.com/LightInUmbra/mu
 - **Portable** (`Multiversal-Manager-<version>-portable.zip`): unzip it anywhere, a USB stick included, and run `Multiversal Manager.exe`. Your collection, settings and backups stay in that folder, so you can carry it between computers. (That's what the `Portable Mode.txt` next to the .exe does; delete it and the portable copy uses your user folder like the installed one.)
 
 Moving an existing collection over? Use *Back Up Now* in the old copy, then *Restore from Backup* in the new one.
+
+### Android: download and install
+
+Download `Multiversal-Manager-<version>.apk` from the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases) on your phone and open it. Android asks you to allow installs from your browser or file manager the first time, and may warn that the app isn't from the Play Store. Later versions install over it as updates. It runs on 64-bit phones (nearly every phone from the last several years). Sign in with your sync account and your collection comes across.
 
 ### From source
 
@@ -163,7 +167,9 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe`.
+GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. Then it builds the Android app and adds its APK to the same release. The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe` and `Multiversal-Manager-1.2.0.apk`.
+
+The Android app is signed with a release key that isn't in the repository. To build it yourself, run `python mobile/build_apk.py` (see the top of that file); without the key your APK gets your computer's own debug key, which can't update a copy installed from the Releases page.
 
 ---
 
@@ -201,12 +207,23 @@ multiversal-manager/
     scryfall.py              # Card data, prices, images and bulk downloads
     mtgjson.py               # 90-day price history backfill
     background.py            # Keeps network work off the interface thread
+    sync.py                  # Syncing with the other devices (Supabase), merging edits made on both
+    ask.py                   # The rules judge's Ask a Rules Question, shared with the phone app
+    card_scan.py             # Recognizing a card from the text read off a photo of it
+    supabase/schema.sql      # The sync database's table and security rules
+    mobile/                  # The Android app (Flet), reusing the modules above
+        main.py              # Collection, sync and the tabs
+        decks.py             # Deck Builder
+        rules_tab.py         # Rules: ask, search and browse
+        scan.py              # The camera card scanner
+        card_reader/         # Flet extension: reads text on the phone with Google ML Kit
+        build_apk.py         # Builds the APK
     external/
         Magic-Projects/      # Submodule: the ScryFunctions toolkit and Card class
     tests/
 ```
 
-**Built with** Python 3, PySide6 (Qt for Python), QtCharts and SQLite.
+**Built with** Python 3, PySide6 (Qt for Python), QtCharts and SQLite on the desktop; [Flet](https://flet.dev) and Google ML Kit text recognition on Android; [Supabase](https://supabase.com) for sync.
 
 ---
 

@@ -8,9 +8,16 @@ Android SDK (a few GB) and takes a while; later builds reuse them.
     multiversal-manager\\Scripts\\python.exe mobile\\build_apk.py
 
 APP_VERSION (e.g. from a release tag) overrides the version in pyproject.toml.
+
+Signing: every APK has to be signed with the same key for a phone to take it as an update.
+The key is mobile/signing/release.jks with its password in mobile/signing/signing.json (both
+git-ignored; back them up, since a lost key means no more updates to installed apps). The
+release workflow passes them instead as ANDROID_SIGNING_KEY_STORE and
+ANDROID_SIGNING_KEY_STORE_PASSWORD. Without either, the APK gets this computer's debug key.
 """
 
 # Imports
+import json
 import os
 import shutil
 import subprocess
@@ -25,6 +32,8 @@ STAGE = MOBILE / "build" / "src"
 SHARED = ["database.py", "sync.py", "scryfall.py", "copy_details.py", "formats.py", "brackets.py", "importer.py",
           "rules.py", "judge.py", "ask.py", "set_notes.py", "rules_library.json", "card_scan.py"]
 MAGIC_PROJECTS = REPO / "external" / "Magic-Projects"
+SIGNING = MOBILE / "signing"
+KEY_ALIAS = "multiversal-manager"
 
 
 def stage():
@@ -57,6 +66,23 @@ def draw_icon(path, size=1024):
     make_icon.draw(size).save(str(path))
 
 
+def build_number(version):
+    # Android's version code, which has to grow with every release: 1.2.3 -> 10203
+    major, minor, patch = (int(part) for part in (version.split(".") + ["0", "0"])[:3])
+    return major * 10000 + minor * 100 + patch
+
+
+def signing():
+    """(key store path, password) from the release workflow or mobile/signing, or None"""
+    if os.environ.get("ANDROID_SIGNING_KEY_STORE"):
+        return os.environ["ANDROID_SIGNING_KEY_STORE"], os.environ["ANDROID_SIGNING_KEY_STORE_PASSWORD"]
+    settings = SIGNING / "signing.json"
+    if settings.exists():
+        saved = json.loads(settings.read_text(encoding="utf-8"))
+        return str(SIGNING / saved["key_store"]), saved["password"]
+    return None
+
+
 def build():
     version = os.environ.get("APP_VERSION")
     flet = Path(sys.executable).with_name("flet.exe" if os.name == "nt" else "flet")
@@ -65,7 +91,16 @@ def build():
     command = [str(flet), "build", "apk", str(STAGE), "--output", str(MOBILE / "build" / "apk"),
                "--arch", "arm64-v8a", "--yes"]
     if version:
-        command += ["--build-version", version]
+        command += ["--build-version", version, "--build-number", str(build_number(version))]
+    key = signing()
+    if key:
+        store, password = key
+        command += ["--android-signing-key-store", store, "--android-signing-key-alias", KEY_ALIAS,
+                    "--android-signing-key-store-password", password, "--android-signing-key-password", password]
+    elif version:
+        sys.exit("A release APK has to be signed with the release key (see the top of this file).")
+    else:
+        print("No release key found, so this APK gets this computer's debug key.")
     subprocess.run(command, check=True)
     apk = next((MOBILE / "build" / "apk").glob("*.apk"))
     target = MOBILE / "build" / f"Multiversal-Manager-{version or 'dev'}.apk"
