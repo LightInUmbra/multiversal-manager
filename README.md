@@ -1,5 +1,7 @@
 # Multiversal Manager
 
+[![Tests](https://github.com/LightInUmbra/multiversal-manager/actions/workflows/tests.yml/badge.svg)](https://github.com/LightInUmbra/multiversal-manager/actions/workflows/tests.yml)
+
 **Your Magic: The Gathering collection, what it's worth, and the whole card market, all in one place.**
 
 Moxfield, Manabox, and Archidekt are all amazing tools that have shaped the way we view card prices, kept track of our collections and our decks. They do so much, but you know what they don't have (or don't have much of)? Interconnectivity. That's why I developed this: The Multiversal Manager! It's supposed to be a tool like those three, except by offering more! It offers a deck builder, finance/market tracker, and more features to come! The biggest thing of it all though? The convenience. Moxfield and Archidekt are available on the web, which is great when working on a computer; it makes a difference for mobile users though. ManaBox exists, but when you'd like to edit something, it HAS to be done via the app; not even the link can save you. That's where my tool comes in - It bridges that gap so not only do you have access to your collection and price tracking system at anytime, but you have it in your pocket, at home, and anywhere you can access a computer!
@@ -11,6 +13,8 @@ Right now it's a desktop app. Web and mobile versions are on the way, and the pl
 ## What it does
 
 ### Your collection
+
+![The collection: every card with its price, change and history](docs/screenshots/collection.png)
 
 - **Exact printings, not just card names --** Add cards and their printings into your collection! From there, the possibilities are endless! Use the cards you own for the decks you'd like to build, or search through the MTG card database for cards you'd need but don't own (yet!).
 - **Condition, language and notes --** The program also picks up on the conditions of cards, their language, and any notes you'd like to put down for them ("signed" or "in the red binder"). If you have the same printing in two conditions or languages, each gets its own entry. Importing decks or cards/card lists pick these up from other tools' CSV files too.
@@ -24,6 +28,8 @@ Right now it's a desktop app. Web and mobile versions are on the way, and the pl
 - **Automatic backups --** The app backs up your collection once a day when it starts and keeps the last 10. Want one right now? *File → Back Up Now*. Need to go back? *File → Restore from Backup…* rolls you back, and saves your current collection first so you can undo the restore too. Backups stay small (a few MB up to tens of MB) because they skip price history that can just be downloaded again.
 
 ### Deck Builder
+
+![The Deck Builder: a Commander deck checked against its bracket, with recommendations for its commander](docs/screenshots/deck-builder.png)
 
 Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pauper, Commander, Oathbreaker, Brawl and every other format Scryfall tracks, and you can make binders and wishlists there too.
 
@@ -41,6 +47,8 @@ The card database (about 80 MB from Scryfall) downloads once and then refreshes 
 
 ### Finance
 
+![Finance: the week's biggest price spikes across every printing](docs/screenshots/finance.png)
+
 Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 
 - **Spikes and drops --** The biggest movers over any time period, for every printing and finish (non-foil, foil, etched). A minimum-price filter keeps penny cards from cluttering things up.
@@ -51,6 +59,8 @@ Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 > Heads up: the first time you open Finance it downloads about 140 MB (card data plus 90 days of prices), and the database grows to a few hundred MB. Prices update once a day, as often as the data sources publish them.
 
 ### Rules
+
+![Rules: a combat question worked out from the Comprehensive Rules](docs/screenshots/rules.png)
 
 Every official rulebook in one place (Ctrl+R), kept on your computer so it works offline.
 
@@ -67,6 +77,15 @@ Every official rulebook in one place (Ctrl+R), kept on your computer so it works
 
 New versions are checked for once a week. Everything comes straight from Wizards of the Coast (and Scryfall for card rulings), so it's as current as the official documents.
 
+<details>
+<summary><b>More screenshots</b></summary>
+
+![Sealed product: what you paid, what it's worth, and the gain](docs/screenshots/sealed.png)
+
+![The Commander Brackets page in the rules window](docs/screenshots/rules-brackets.png)
+
+</details>
+
 ---
 
 ## The Multiverse
@@ -81,13 +100,20 @@ The bigger idea is a set of connected apps that all share the same collection:
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. For now the desktop app keeps everything in a local SQLite database, with the card and price logic kept separate from the interface so it can be plugged into a sync service later.
 
-### Coming next on desktop
-
-- A standalone Windows installer
-
 ---
 
 ## Getting started
+
+### Windows: download and run
+
+There are two versions on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), same app either way:
+
+- **Installer** (`Multiversal Manager-<version>-setup.exe`): installs for your Windows user, no admin rights needed, with a Start menu entry, an optional desktop shortcut and an uninstaller. Your collection lives in `%LOCALAPPDATA%\Multiversal Manager`, and uninstalling never deletes it.
+- **Portable** (`Multiversal Manager-<version>-portable.zip`): unzip it anywhere, a USB stick included, and run `Multiversal Manager.exe`. Your collection, settings and backups stay in that folder, so you can carry it between computers. (That's what the `Portable Mode.txt` next to the .exe does; delete it and the portable copy uses your user folder like the installed one.)
+
+Moving an existing collection over? Use *Back Up Now* in the old copy, then *Restore from Backup* in the new one.
+
+### From source
 
 Multiversal Manager uses [Magic-Projects](https://github.com/LightInUmbra/Magic-Projects), a Scryfall toolkit I also wrote, as a git submodule. So clone it with submodules:
 
@@ -108,7 +134,7 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Your data never leaves your machine. Your collection and price history live in `collection.db` next to `main.py`, settings go in `settings.ini`, backups go in `backups/`, the rules documents in `rules/`, and card images are cached in `image_cache/`. All of it is git-ignored.
+Your data never leaves your machine. Run from source, your collection and price history live in `collection.db` next to `main.py`, settings go in `settings.ini`, backups go in `backups/`, the rules documents in `rules/`, and card images are cached in `image_cache/`. All of it is git-ignored.
 
 ### Taking it offline
 
@@ -119,6 +145,25 @@ Everything lives in that one folder, so you can copy it to a USB stick or anothe
 ```
 python -m pytest
 ```
+
+### Building the Windows app
+
+```
+python build.py
+```
+
+This makes both versions in `dist/`: the portable zip and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), the installer. The version number is `VERSION` in `build.py`.
+
+### Releasing a new version
+
+Tests run on GitHub for every push (the badge at the top). To publish a version, tag it and push the tag:
+
+```
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. The tag sets the version number, so `v1.2.0` makes `Multiversal Manager-1.2.0-setup.exe`.
 
 ---
 
@@ -141,6 +186,7 @@ multiversal-manager/
     synergy.py               # Commander themes and how recommendations are picked
     card_browser.py          # Card image grid / lightweight table, and the printing picker
     formats.py               # Formats and deck legality rules
+    build.py                 # Builds the Windows app: portable zip and installer (installer.iss)
     brackets.py              # Commander Brackets: the brackets, Game Changers, and checking a deck
     trends.py                # Price change math and the Trends window
     database.py              # SQLite storage, price history and schema upgrades

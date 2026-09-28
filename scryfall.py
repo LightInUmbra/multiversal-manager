@@ -27,8 +27,9 @@ import database
 BASE_DIR = Path(__file__).resolve().parent
 
 # ScryFunctions does `import classes.card`, so the Magic-Projects root has to be importable
+# (the built app has it bundled already)
 _MAGIC_PROJECTS = BASE_DIR / "external" / "Magic-Projects"
-if not (_MAGIC_PROJECTS / "Functions" / "ScryFunctions.py").exists():
+if not getattr(sys, "frozen", False) and not (_MAGIC_PROJECTS / "Functions" / "ScryFunctions.py").exists():
     raise ImportError(
         "Magic-Projects submodule is missing. Run: git submodule update --init"
     )
@@ -40,7 +41,7 @@ from Functions import ScryFunctions as sf  # noqa: E402
 from classes.card import Card  # noqa: E402
 
 # Constants
-IMAGE_CACHE_DIR = BASE_DIR / "image_cache"
+IMAGE_CACHE_DIR = database.DATA_DIR / "image_cache"
 TIMEOUT = 15
 
 # Scryfall asks for an accurate User-Agent identifying the app

@@ -6,7 +6,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, QUrl
-from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
+from PySide6.QtGui import QAction, QCursor, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
@@ -819,6 +819,9 @@ def _install_crash_log():
 def main():
     app = QApplication(sys.argv)
     app.setApplicationName(APP_NAME)
+    # The spellbook icon on every window (the built app has it bundled next to its code)
+    app.setWindowIcon(QIcon(str(Path(getattr(sys, "_MEIPASS", Path(__file__).resolve().parent))
+                                / "assets" / "icon.ico")))
     _install_crash_log()
     db.create_table()
     window = MainWindow()

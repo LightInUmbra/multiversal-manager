@@ -150,6 +150,11 @@ def _update_card_database(last_bulk, track_new, progress=None):
     return finance.update_market(last_bulk, None, track_new, history=False, progress=progress)
 
 
+def _check_combos(key):
+    # (key, Commander Spellbook's reading) for a deck's (commanders, main deck) names
+    return key, brackets.fetch_spellbook(list(key[0]), list(key[1]))
+
+
 class ListsWindow(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent, Qt.WindowType.Window)
@@ -504,16 +509,24 @@ class ListsWindow(QWidget):
                tuple(sorted({e["name"] for e in cards if e["section"] == "Main"})))
         if key not in self._spellbook and not scryfall.offline and cards:
             self._spellbook[key] = None
-            background.run(brackets.fetch_spellbook, list(key[0]), list(key[1]),
-                           on_success=lambda result, key=key: self._on_spellbook(key, result),
-                           on_error=lambda _, key=key: self._on_spellbook(key, False))
+            # Bound methods, so nothing is delivered if the window is gone by the time it answers
+            background.run(_check_combos, key, on_success=self._on_spellbook, on_error=self._on_spellbook_failed)
         found = self._spellbook.get(key) if key in self._spellbook else "offline"
         if not cards:  # nothing to ask about
             found = brackets.read_spellbook({"cards": [], "combos": []})
         return brackets.check(self._entries, found if isinstance(found, dict) else None), found
 
-    def _on_spellbook(self, key, result):
-        self._spellbook[key] = result
+    def _on_spellbook(self, result):
+        key, found = result
+        self._spellbook[key] = found
+        if self.is_commander_deck():
+            self.reload()
+
+    def _on_spellbook_failed(self, message):
+        # The error doesn't say which deck it was for: every check still waiting has failed
+        for key, found in self._spellbook.items():
+            if found is None:
+                self._spellbook[key] = False
         if self.is_commander_deck():
             self.reload()
 

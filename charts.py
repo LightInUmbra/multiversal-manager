@@ -21,11 +21,7 @@ class HistoryChart(QStackedWidget):
         super().__init__(parent)
         self.setMinimumHeight(min_height)
 
-        self.chart = QChart()
-        self.chart.setTitle(title)
-        self.chart.legend().hide()
-        self.chart.setMargins(QMargins(0, 0, 0, 0))
-        self.chart.setBackgroundRoundness(0)
+        self.chart = self._new_chart(title)
         self.view = QChartView(self.chart)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
 
@@ -38,6 +34,15 @@ class HistoryChart(QStackedWidget):
         self.addWidget(self.message)
         self.show_message("")
 
+    @staticmethod
+    def _new_chart(title):
+        chart = QChart()
+        chart.setTitle(title)
+        chart.legend().hide()
+        chart.setMargins(QMargins(0, 0, 0, 0))
+        chart.setBackgroundRoundness(0)
+        return chart
+
     def show_message(self, text):
         self.message.setText(text)
         self.setCurrentWidget(self.message)
@@ -49,9 +54,11 @@ class HistoryChart(QStackedWidget):
             self.show_message(empty_message)
             return
 
-        self.chart.removeAllSeries()
-        for axis in self.chart.axes():
-            self.chart.removeAxis(axis)
+        # A new chart for every card: Qt leaves a removed axis's labels drawn under the
+        # new axis's, so reusing one chart shows two sets of prices and dates
+        old, self.chart = self.chart, self._new_chart(self.chart.title())
+        self.view.setChart(self.chart)
+        old.deleteLater()
 
         line = QLineSeries()
         line.setPen(QPen(LINE_COLOR, 2))

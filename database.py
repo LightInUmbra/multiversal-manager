@@ -1,14 +1,35 @@
 # Imports
 import json
+import os
 import sqlite3 as sql
+import sys
 from contextlib import contextmanager
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
 # Constants
-# Stored next to this file (not the current working directory) so the app finds
-# the same collection no matter where it's launched from
-DB_NAME = str(Path(__file__).resolve().parent / "collection.db")
+# The built app's portable version has this file next to Multiversal Manager.exe
+PORTABLE_MARKER = "Portable Mode.txt"
+
+
+def _data_dir():
+    """The folder for the collection and everything kept beside it (settings, backups,
+    rules, image cache, crash log). Never the current working directory, so the app
+    finds the same collection wherever it's launched from:
+    - from source: next to this file
+    - the portable build (PORTABLE_MARKER beside the .exe, e.g. on a USB stick): next to the .exe
+    - the installed build: the user's local app data folder, which is always writable"""
+    if not getattr(sys, "frozen", False):
+        return Path(__file__).resolve().parent
+    app_dir = Path(sys.executable).resolve().parent
+    if (app_dir / PORTABLE_MARKER).exists():
+        return app_dir
+    return Path(os.environ.get("LOCALAPPDATA") or Path.home()) / "Multiversal Manager"
+
+
+DATA_DIR = _data_dir()
+DATA_DIR.mkdir(parents=True, exist_ok=True)
+DB_NAME = str(DATA_DIR / "collection.db")
 
 # Columns added after the original (id, name, set_name, price, quantity) schema.
 # create_table() adds any that are missing, so older collection.db files upgrade in place.

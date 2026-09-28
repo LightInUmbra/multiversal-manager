@@ -1,0 +1,48 @@
+# Pushing a version tag (git tag v1.1.0 && git push origin v1.1.0) tests the code, builds
+# the installer and the portable zip on Windows, and publishes them as a GitHub Release
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write   # to create the release
+
+jobs:
+  release:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the tests
+        run: python -m pytest
+        env:
+          QT_QPA_PLATFORM: offscreen
+
+      - name: Install Inno Setup
+        run: choco install innosetup --no-progress -y
+
+      - name: Build the installer and portable zip
+        shell: bash
+        run: |
+          export APP_VERSION="${GITHUB_REF_NAME#v}"
+          python build.py
+
+      - name: Publish the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/*-setup.exe dist/*-portable.zip \
+            --title "Multiversal Manager ${GITHUB_REF_NAME#v}" --generate-notes

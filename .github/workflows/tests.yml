@@ -1,0 +1,28 @@
+# Runs the tests on GitHub's Windows machines for every push to main and every pull request
+name: Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true   # Magic-Projects (external/)
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run the tests
+        run: python -m pytest
+        env:
+          QT_QPA_PLATFORM: offscreen   # no screen on the build machine
