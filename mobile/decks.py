@@ -58,6 +58,14 @@ class Decks:
             self.list_id = None
         self.show_list() if self.list_id is not None else self.show_all()
 
+    def back(self):
+        # Android's back button: from a list to all lists. False when there's nowhere to go back to.
+        if self.list_id is None:
+            return False
+        self.list_id = None
+        self.show_all()
+        return True
+
     def fab(self):
         # What the + button does here
         self.add_card() if self.list_id is not None else self.new_list()
@@ -249,6 +257,32 @@ class Decks:
         section = ft.Dropdown(label="Section", value=entry["section"], visible=is_deck,
                               options=[ft.DropdownOption(key=s, text=SECTION_TITLES[s]) for s in SECTIONS])
         remove = ft.TextButton("Remove")
+        printing = ft.Dropdown(label="Printing", visible=False)
+        finish = ft.Dropdown(label="Finish", visible=False)
+        printings = []
+
+        def show_finishes(e=None):
+            card = printings[int(printing.value)]
+            codes = scryfall.finish_codes(card) or [0]
+            finish.options = [ft.DropdownOption(key=str(c), text=scryfall.FINISHES[c][1]) for c in codes]
+            if finish.value not in {str(c) for c in codes}:
+                finish.value = str(codes[0])
+            self.page.update()
+
+        def load_printings(e):
+            found = self.busy("Looking up printings", lambda: scryfall.get_printings(entry["name"]))
+            if not found:
+                return
+            printings[:] = found
+            printing.options = [ft.DropdownOption(key=str(i), text=scryfall.printing_label(c)) for i, c in enumerate(found)]
+            printing.value = str(next((i for i, c in enumerate(found) if c.id == entry["scryfall_id"]), 0))
+            finish.value = str(entry["foil"])
+            printing.visible = finish.visible = True
+            change.visible = False
+            show_finishes()
+
+        change = ft.OutlinedButton("Change printing", icon=ft.Icons.COLLECTIONS_OUTLINED, on_click=load_printings)
+        printing.on_select = show_finishes
 
         def save(e):
             count = _number(quantity)
@@ -256,10 +290,16 @@ class Decks:
                 self.page.update()
                 return
             self.page.pop_dialog()
+            where = section.value if is_deck else entry["section"]
+            card = printings[int(printing.value)] if printings else None
             if count < 1:
                 db.remove_list_entries([entry["id"]])
+            elif card and (card.id, int(finish.value)) != (entry["scryfall_id"], entry["foil"]):
+                # Like the desktop: the entry becomes the chosen printing (merging with one already there)
+                db.remove_list_entries([entry["id"]])
+                db.add_list_entries(self.list_id, [scryfall.card_record(card, int(finish.value), count)], where)
             else:
-                db.update_list_entry(entry["id"], quantity=count, section=section.value if is_deck else entry["section"])
+                db.update_list_entry(entry["id"], quantity=count, section=where)
             self._changed()
 
         def remove_clicked(e):
@@ -276,9 +316,13 @@ class Decks:
         details = [ft.Image(src=entry["image_url"], height=280)] if entry["image_url"] else []
         if entry["oracle_text"]:
             details.append(ft.Text(entry["oracle_text"], size=13))
+        where = " · ".join(x for x in (entry["set_name"], f"#{entry['collector_number']}" if entry["collector_number"] else "",
+                                       scryfall.finish_label(entry["foil"])) if x)
+        if where:
+            details.append(ft.Text(where, color=MUTED, size=13))
         self.page.show_dialog(ft.AlertDialog(
             title=ft.Text(entry["name"]), scrollable=True,
-            content=ft.Column([*details, quantity, section], tight=True),
+            content=ft.Column([*details, change, printing, finish, quantity, section], tight=True, spacing=12),
             actions=[remove, ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
                      ft.TextButton("Save", on_click=save)]))
 

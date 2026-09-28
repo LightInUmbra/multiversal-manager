@@ -20,6 +20,7 @@ import scryfall  # noqa: E402
 import sync  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
+BACK_TO_EXIT = 2  # seconds to press back again to leave the app
 
 
 def _money(value):
@@ -353,6 +354,26 @@ def main(page: ft.Page):
     page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
         ft.NavigationBarDestination(icon=ft.Icons.STYLE_OUTLINED, label="Collection"),
         ft.NavigationBarDestination(icon=ft.Icons.MENU_BOOK_OUTLINED, label="Decks")])
+    # Android's back button steps back through the app instead of closing it: out of a list,
+    # then from Decks to Collection, and on Collection it takes a second press to exit.
+    # (An open dialog closes first on its own.)
+    last_back = [float("-inf")]
+
+    async def on_back(e):
+        if page.navigation_bar.selected_index == 1:
+            if not deck_builder.back():
+                page.navigation_bar.selected_index = 0
+                switch(None)
+            await e.control.confirm_pop(False)
+        elif time.monotonic() - last_back[0] < BACK_TO_EXIT:
+            await e.control.confirm_pop(True)
+        else:
+            last_back[0] = time.monotonic()
+            page.show_dialog(ft.SnackBar(ft.Text("Tap back again to exit"), duration=int(BACK_TO_EXIT * 1000)))
+            await e.control.confirm_pop(False)
+
+    page.views[0].can_pop = False
+    page.views[0].on_confirm_pop = on_back
     page.floating_action_button = ft.FloatingActionButton(
         icon=ft.Icons.ADD, tooltip="Add",
         on_click=lambda e: deck_builder.fab() if page.navigation_bar.selected_index == 1 else add_card())
