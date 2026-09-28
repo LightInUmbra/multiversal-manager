@@ -12,7 +12,16 @@
 # (added on two devices) become one entry, the way adding a card twice does.
 import json
 
+import requests
+
 import database as db
+
+# The Supabase project holding every device's records (schema: supabase/schema.sql).
+# The publishable key is meant to ship in apps; row-level security keeps each account to its own rows.
+SUPABASE_URL = "https://aepdyzawmgpwcmxytocu.supabase.co"
+SUPABASE_KEY = "sb_publishable_yL1ZQ5fwf9dBOkEv79rv0w_fVXELPyb"
+TIMEOUT = 30
+_PAGE = 1000  # Supabase's most rows per request
 
 # Parents before children, so a deck exists before its entries arrive
 TABLES = ("lists", "list_entries", "collection", "sealed")
@@ -193,3 +202,67 @@ def sync(remote):
         with db._connect() as conn:
             _remember(conn, changes)
     return len(changes), applied
+
+
+# Supabase
+
+class SyncError(Exception):
+    pass
+
+
+def _check(response):
+    if response.ok:
+        return response.json() if response.content else None
+    try:
+        body = response.json()
+    except ValueError:
+        body = {}
+    message = body.get("error_description") or body.get("msg") or body.get("message") or response.reason
+    raise SyncError(message)
+
+
+def _auth(grant, payload):
+    # A session: access_token (good for an hour) and refresh_token (keeps the device signed in)
+    return _check(requests.post(f"{SUPABASE_URL}/auth/v1/token", params={"grant_type": grant}, json=payload,
+                                headers={"apikey": SUPABASE_KEY}, timeout=TIMEOUT))
+
+
+def sign_in(email, password):
+    """Returns the refresh token that keeps this device signed in"""
+    return _auth("password", {"email": email, "password": password})["refresh_token"]
+
+
+def sign_up(email, password):
+    """Creates an account. Returns its refresh token, or None when Supabase first wants
+    the email address confirmed (via the link it sends)."""
+    body = _check(requests.post(f"{SUPABASE_URL}/auth/v1/signup", json={"email": email, "password": password},
+                                headers={"apikey": SUPABASE_KEY}, timeout=TIMEOUT))
+    return body.get("refresh_token")
+
+
+class SupabaseRemote:
+    """The remote for sync(). Signing in again uses up refresh_token, so save
+    self.refresh_token (its replacement) afterwards."""
+
+    def __init__(self, refresh_token):
+        session = _auth("refresh_token", {"refresh_token": refresh_token})
+        self.refresh_token = session["refresh_token"]
+        self.email = session["user"]["email"]
+        self._headers = {"apikey": SUPABASE_KEY, "Authorization": f"Bearer {session['access_token']}"}
+
+    def push(self, records, batch=500):
+        for start in range(0, len(records), batch):
+            _check(requests.post(f"{SUPABASE_URL}/rest/v1/rpc/push_records", headers=self._headers,
+                                 json={"records": records[start:start + batch]}, timeout=TIMEOUT))
+
+    def pull(self, cursor):
+        records, cursor = [], int(cursor or 0)
+        while True:
+            page = _check(requests.get(f"{SUPABASE_URL}/rest/v1/records", headers=self._headers, timeout=TIMEOUT,
+                                       params={"select": "tbl,uid,updated_at,deleted,data,seq",
+                                               "seq": f"gt.{cursor}", "order": "seq", "limit": _PAGE}))
+            records += page
+            if page:
+                cursor = page[-1]["seq"]
+            if len(page) < _PAGE:
+                return records, str(cursor)

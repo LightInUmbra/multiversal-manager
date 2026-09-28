@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
     QTableWidget, QTableWidgetItem, QPushButton, QDialog, QLineEdit, QLabel,
     QSplitter, QHeaderView, QStyledItemDelegate, QMessageBox, QFileDialog, QAbstractItemView,
-    QMenu, QComboBox, QTabWidget, QScrollArea, QFrame,
+    QMenu, QComboBox, QTabWidget, QScrollArea, QFrame, QDialogButtonBox,
 )
 
 import background
@@ -23,6 +23,7 @@ import lists
 import rules_window
 import sealed
 import scryfall
+import sync
 import trends
 from add_card_dialog import CardDialog
 from import_review_dialog import count as _count, start_import
@@ -101,6 +102,7 @@ class MainWindow(QMainWindow):
         self._rows_by_id = {}
         self._refreshing = False
         self._quiet_refresh = False
+        self._syncing = False
         self.settings = finance._settings()
 
         self._build_menu()
@@ -270,6 +272,7 @@ class MainWindow(QMainWindow):
         # Once a day, quietly, in the background
         background.run(backup.daily_backup, self._keep_tracked_history(),
                        on_success=lambda _: None, on_error=self._on_backup_failed)
+        self.sync_now(quiet=True)
 
     def _build_menu(self):
         file_menu = self.menuBar().addMenu("&File")
@@ -294,6 +297,9 @@ class MainWindow(QMainWindow):
         self.offline_action.setStatusTip("Use only the downloaded card data; nothing is downloaded")
         self.offline_action.triggered.connect(self.on_offline_toggled)
         file_menu.addAction(self.offline_action)
+        file_menu.addSeparator()
+        file_menu.addAction("S&ync Now", self.sync_now, QKeySequence("Ctrl+Shift+S"))
+        file_menu.addAction("Sync &Account…", self.sync_account)
         file_menu.addSeparator()
         file_menu.addAction(quit_action)
         self.offline_label = QLabel("Offline")
@@ -350,6 +356,97 @@ class MainWindow(QMainWindow):
                 "yet, so adding and importing cards won't find anything.\n\n"
                 "To download it, turn Work Offline off and open the Deck Builder or Finance once "
                 "(about 80 MB).")
+
+    # Sync
+
+    def sync_now(self, quiet=False):
+        # quiet: the sync on startup, which only reports in the status bar
+        if not self.settings.value("sync_token", ""):
+            if not quiet:
+                self.sync_account()
+            return
+        if self._syncing or scryfall.offline:
+            if not quiet and scryfall.offline:
+                QMessageBox.information(self, "Sync", "Syncing needs the internet. Turn off Work Offline first.")
+            return
+        self._syncing = True
+        self.statusBar().showMessage("Syncing…")
+        background.run(_sync_with, self.settings.value("sync_token"),
+                       on_success=lambda result: self._on_synced(result, quiet),
+                       on_error=lambda message: self._on_sync_failed(message, quiet))
+
+    def _on_synced(self, result, quiet):
+        token, pushed, applied, error = result
+        self.settings.setValue("sync_token", token)
+        if error:
+            self._on_sync_failed(error, quiet)
+            return
+        self._syncing = False
+        if applied:
+            self.populate_table()
+            self.sealed_panel.reload()
+            self.show_selected_card()
+        self.statusBar().showMessage(f"Synced: sent {_count(pushed, 'change')}, "
+                                     f"received {_count(applied, 'change')}.", 8000)
+
+    def _on_sync_failed(self, message, quiet):
+        self._syncing = False
+        self.statusBar().showMessage(f"Sync failed: {message}", 15000)
+        if not quiet:
+            QMessageBox.warning(self, "Sync", f"Couldn't sync:\n{message}\n\n"
+                                "If it keeps failing, sign in again under File → Sync Account.")
+
+    def sync_account(self):
+        email = self.settings.value("sync_email", "")
+        if self.settings.value("sync_token", ""):
+            answer = QMessageBox.question(
+                self, "Sync Account", f"Signed in as {email}.\n\nSign out? This computer keeps its "
+                "collection; it just stops syncing with your other devices.")
+            if answer == QMessageBox.StandardButton.Yes:
+                self.settings.remove("sync_token")
+            return
+
+        dialog = QDialog(self)
+        dialog.setWindowTitle("Sync Account")
+        form = QFormLayout(dialog)
+        intro = QLabel("Sign in to keep your cards, decks and sealed product the same on all your "
+                       "devices. Use the same account on each one.")
+        intro.setWordWrap(True)
+        form.addRow(intro)
+        email_input = QLineEdit(email)
+        password_input = QLineEdit(echoMode=QLineEdit.EchoMode.Password)
+        form.addRow("Email:", email_input)
+        form.addRow("Password:", password_input)
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Cancel)
+        sign_in = buttons.addButton("Sign In", QDialogButtonBox.ButtonRole.AcceptRole)
+        create = buttons.addButton("Create Account", QDialogButtonBox.ButtonRole.ActionRole)
+        buttons.rejected.connect(dialog.reject)
+        form.addRow(buttons)
+
+        def signed_in(token):
+            buttons.setEnabled(True)
+            if token is None:
+                QMessageBox.information(dialog, "Sync Account", "Account created. Open the link in the "
+                                        "email from Supabase to confirm it, then sign in here.")
+                return
+            self.settings.setValue("sync_token", token)
+            self.settings.setValue("sync_email", email_input.text().strip())
+            dialog.accept()
+            self.sync_now()
+
+        def failed(message):
+            buttons.setEnabled(True)
+            QMessageBox.warning(dialog, "Sync Account", message)
+
+        def go(action):
+            if email_input.text().strip() and password_input.text():
+                buttons.setEnabled(False)
+                background.run(action, email_input.text().strip(), password_input.text(),
+                               on_success=signed_in, on_error=failed)
+
+        sign_in.clicked.connect(lambda: go(sync.sign_in))
+        create.clicked.connect(lambda: go(sync.sign_up))
+        dialog.exec()
 
     # Table
 
@@ -791,6 +888,16 @@ class MainWindow(QMainWindow):
             f"<p>{SCRYFALL_NOTICE}</p>"
             f"<p>{FAN_CONTENT_NOTICE}</p>"
         ))
+
+
+def _sync_with(token):
+    # Runs on a worker thread. Signing in replaces the saved token, so the new one comes back
+    # even when the sync itself fails; otherwise the next try would be signed out.
+    remote = sync.SupabaseRemote(token)
+    try:
+        return (remote.refresh_token, *sync.sync(remote), None)
+    except Exception as error:
+        return remote.refresh_token, 0, 0, str(error) or type(error).__name__
 
 
 # App setup
