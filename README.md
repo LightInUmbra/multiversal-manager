@@ -94,8 +94,8 @@ The bigger idea is a set of connected apps that all share the same collection:
 
 | Platform | Status |
 |---|---|
-| **Desktop** | In active development (you're looking at it) |
-| **Android** | Available: collection and prices, Deck Builder, the rules judge, and a camera card scanner |
+| **Desktop** | Available! |
+| **Android** | Available; collection and prices, Deck Builder, the rules judge, and a camera card scanner |
 | **Web** | Planned |
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.
