@@ -15,6 +15,7 @@ import flet as ft  # noqa: E402
 
 import copy_details  # noqa: E402
 import database as db  # noqa: E402
+import decks  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
 
@@ -131,16 +132,14 @@ def main(page: ft.Page):
             actions=[remove, ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
                      ft.TextButton("Save", on_click=save)]))
 
-    def add_card(e):
+    def card_dialog(title, extras, on_done):
+        # Finds a card and printing on Scryfall, then calls on_done(card, finish code, quantity).
+        # extras are more fields shown under the quantity (condition, deck section…).
         name = ft.TextField(label="Card name", autofocus=True)
         suggestions = ft.Column(tight=True)
         printing = ft.Dropdown(label="Printing", visible=False, expand=True)
         finish = ft.Dropdown(label="Finish", visible=False)
         quantity = ft.TextField(label="Quantity", value="1", keyboard_type=ft.KeyboardType.NUMBER)
-        condition = ft.Dropdown(label="Condition", value=copy_details.DEFAULT_CONDITION,
-                                options=_options(copy_details.CONDITIONS))
-        language = ft.Dropdown(label="Language", value=copy_details.DEFAULT_LANGUAGE,
-                               options=_options(copy_details.LANGUAGES))
         printings = []
 
         def typed(e):
@@ -194,22 +193,31 @@ def main(page: ft.Page):
                 quantity.error_text = "Enter a number"
                 page.update()
                 return
-            card = printings[int(printing.value)]
-            record = scryfall.card_record(card, int(finish.value), count)
-            db.add_card(**record, condition=condition.value, language=language.value)
             page.pop_dialog()
-            search.value = ""
-            show_cards()
-            toast(f"Added {count}× {card.name}.")
+            on_done(printings[int(printing.value)], int(finish.value), count)
 
         name.on_change = typed
         name.on_submit = lambda e: pick(name.value.strip()) if name.value.strip() else None
         printing.on_select = printing_picked
         page.show_dialog(ft.AlertDialog(
-            title=ft.Text("Add Card"), scrollable=True,
-            content=ft.Column([name, suggestions, printing, finish, quantity, condition, language], tight=True),
+            title=ft.Text(title), scrollable=True,
+            content=ft.Column([name, suggestions, printing, finish, quantity, *extras], tight=True),
             actions=[ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
                      ft.TextButton("Add", on_click=add)]))
+
+    def add_card():
+        condition = ft.Dropdown(label="Condition", value=copy_details.DEFAULT_CONDITION,
+                                options=_options(copy_details.CONDITIONS))
+        language = ft.Dropdown(label="Language", value=copy_details.DEFAULT_LANGUAGE,
+                               options=_options(copy_details.LANGUAGES))
+
+        def added(card, finish, count):
+            db.add_card(**scryfall.card_record(card, finish, count), condition=condition.value, language=language.value)
+            search.value = ""
+            show_cards()
+            toast(f"Added {count}× {card.name}.")
+
+        card_dialog("Add Card", [condition, language], added)
 
     def refresh_prices(e):
         rows = [(r["id"], r["scryfall_id"], r["foil"]) for r in db.get_all_cards() if r["scryfall_id"]]
@@ -266,6 +274,7 @@ def main(page: ft.Page):
             pushed, applied = result
             if applied:
                 show_cards()
+                deck_builder.refresh()
             if not quiet or applied:
                 toast(f"Synced: sent {pushed}, received {applied}.")
 
@@ -332,8 +341,22 @@ def main(page: ft.Page):
         ft.IconButton(ft.Icons.SYNC, tooltip="Sync now", on_click=sync_now),
         ft.IconButton(ft.Icons.ACCOUNT_CIRCLE_OUTLINED, tooltip="Sync account", on_click=account),
     ])
-    page.floating_action_button = ft.FloatingActionButton(icon=ft.Icons.ADD, tooltip="Add card", on_click=add_card)
-    page.add(ft.SafeArea(ft.Column([progress, search, summary, card_list], expand=True), expand=True))
+    deck_builder = decks.Decks(page, toast, busy, card_dialog)
+    collection = ft.Column([search, summary, card_list], expand=True)
+    body = ft.Container(collection, expand=True)
+
+    def switch(e):
+        on_decks = page.navigation_bar.selected_index == 1
+        body.content = deck_builder.view if on_decks else collection
+        deck_builder.refresh() if on_decks else show_cards()
+
+    page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
+        ft.NavigationBarDestination(icon=ft.Icons.STYLE_OUTLINED, label="Collection"),
+        ft.NavigationBarDestination(icon=ft.Icons.MENU_BOOK_OUTLINED, label="Decks")])
+    page.floating_action_button = ft.FloatingActionButton(
+        icon=ft.Icons.ADD, tooltip="Add",
+        on_click=lambda e: deck_builder.fab() if page.navigation_bar.selected_index == 1 else add_card())
+    page.add(ft.SafeArea(ft.Column([progress, body], expand=True), expand=True))
     show_cards()
     page.run_thread(auto_sync)
 

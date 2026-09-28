@@ -22,7 +22,7 @@ MOBILE = Path(__file__).resolve().parent
 REPO = MOBILE.parent
 STAGE = MOBILE / "build" / "src"
 # The desktop modules the phone app imports, and what they import in turn
-SHARED = ["database.py", "sync.py", "scryfall.py", "copy_details.py"]
+SHARED = ["database.py", "sync.py", "scryfall.py", "copy_details.py", "formats.py", "brackets.py", "importer.py"]
 MAGIC_PROJECTS = REPO / "external" / "Magic-Projects"
 
 
@@ -34,8 +34,9 @@ def stage():
         if item.name != "build":
             shutil.rmtree(item) if item.is_dir() else item.unlink()
     (STAGE / "assets").mkdir()
-    for name in ["main.py", "pyproject.toml"]:
-        shutil.copy(MOBILE / name, STAGE / name)
+    for path in [*MOBILE.glob("*.py"), MOBILE / "pyproject.toml"]:
+        if path.name != "build_apk.py":
+            shutil.copy(path, STAGE / path.name)
     for name in SHARED:
         shutil.copy(REPO / name, STAGE / name)
     # scryfall.py looks for Magic-Projects at external/Magic-Projects, as in the repo

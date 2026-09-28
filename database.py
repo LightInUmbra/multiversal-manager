@@ -869,11 +869,21 @@ def replace_oracle_cards(records):
     # records: dicts with _ORACLE_COLUMNS. Replaces the whole card database in one go.
     with _connect() as conn:
         conn.execute("DELETE FROM oracle_cards")
-        conn.executemany(
-            f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
-            f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})",
-            [{"edhrec_rank": None, "oracle_id": None, "power": None, "toughness": None, "loyalty": None, "game_changer": 0, **r}
-             for r in records])
+        _add_oracle_cards(conn, records)
+
+
+def add_oracle_cards(records):
+    # Adds or refreshes some cards (the phone app keeps just the ones in its decks)
+    with _connect() as conn:
+        _add_oracle_cards(conn, records)
+
+
+def _add_oracle_cards(conn, records):
+    conn.executemany(
+        f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
+        f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})",
+        [{"edhrec_rank": None, "oracle_id": None, "power": None, "toughness": None, "loyalty": None, "game_changer": 0, **r}
+         for r in records])
 
 
 def card_name_list():

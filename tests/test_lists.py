@@ -79,8 +79,8 @@ def test_card_search_owned_and_explore(temp_db):
 
 
 def test_card_database_from_bulk_data():
-    import finance
-    card = finance.oracle_record({
+    import scryfall
+    card = scryfall.oracle_record({
         "id": "delver", "name": "Delver of Secrets // Insectile Aberration", "layout": "transform",
         "type_line": "Creature — Human Wizard // Creature — Human Insect", "cmc": 1, "color_identity": ["U"],
         "legalities": {"modern": "legal"}, "finishes": ["nonfoil", "foil"], "prices": {"usd": "0.10"},
@@ -90,7 +90,7 @@ def test_card_database_from_bulk_data():
     })
     assert (card["mana_cost"], card["colors"], card["color_identity"], card["price"]) == ("{U}", "U", "U", 0.10)
     assert card["oracle_text"] == "Front.\n\nFlying"
-    assert finance.oracle_record({"id": "t", "name": "Goblin", "layout": "token"}) is None
+    assert scryfall.oracle_record({"id": "t", "name": "Goblin", "layout": "token"}) is None
 
 
 def test_printings_grouped_with_finishes_and_owned(temp_db):

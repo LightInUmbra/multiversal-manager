@@ -181,6 +181,61 @@ def _local_collection(identifiers):
 
 # API calls
 
+# Scryfall finish -> (foil code stored with prices, Scryfall price key)
+PRICE_KEYS = {"nonfoil": (0, "usd"), "foil": (1, "usd_foil"), "etched": (2, "usd_etched")}
+
+# Scryfall layouts that aren't cards you put in a deck
+_NOT_DECK_CARDS = {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar",
+                   "augment", "host", "reversible_card"}
+
+
+def oracle_record(data):
+    # The card database row for a raw Scryfall card dict (see database.add_oracle_cards),
+    # or None for tokens, emblems and the like
+    if data.get("layout") in _NOT_DECK_CARDS or data.get("set_type") == "memorabilia":
+        return None
+    faces = data.get("card_faces") or []
+    front = faces[0] if faces else {}
+    finishes = data.get("finishes") or []
+    finish = next((f for f in PRICE_KEYS if f in finishes), "nonfoil")
+    code, price_key = PRICE_KEYS[finish]
+    price = (data.get("prices") or {}).get(price_key)
+    return {
+        "name": data["name"],
+        "type_line": data.get("type_line") or front.get("type_line", ""),
+        "mana_cost": data.get("mana_cost") or front.get("mana_cost", ""),
+        "cmc": data.get("cmc", 0),
+        "colors": "".join(data.get("colors") or front.get("colors") or []),
+        "color_identity": "".join(data.get("color_identity") or []),
+        "oracle_text": data.get("oracle_text") or "\n\n".join(f.get("oracle_text", "") for f in faces),
+        "legalities": json.dumps(data.get("legalities") or {}),
+        "scryfall_id": data["id"],
+        "set_code": (data.get("set") or "").upper(),
+        "set_name": data.get("set_name"),
+        "collector_number": data.get("collector_number"),
+        "rarity": data.get("rarity"),
+        "image_url": image_url_for(Card(data)),
+        "foil": code,
+        "price": float(price) if price else None,
+        "edhrec_rank": data.get("edhrec_rank"),
+        "oracle_id": data.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
+        # Printed stats of the card (its front face), for the rules calculators
+        "power": data.get("power") or front.get("power"),
+        "toughness": data.get("toughness") or front.get("toughness"),
+        "loyalty": data.get("loyalty") or front.get("loyalty"),
+        "game_changer": int(bool(data.get("game_changer"))),
+    }
+
+
+def fetch_card_data(names):
+    """Card database rows (see oracle_record) for these card names, looked up on Scryfall: the
+    phone app's way to know a deck's cards without downloading the whole card database.
+    Scryfall finds two-faced cards by their front face ("Fire", not "Fire // Ice"); the
+    rows still carry the full name, which is what decks store."""
+    identifiers = [{"name": n.split(" // ")[0]} for n in dict.fromkeys(names)]
+    return [r for r in (oracle_record(card.data) for card in get_collection(identifiers)) if r]
+
+
 def autocomplete(partial_name):
     # Up to 20 card names matching what's been typed so far
     if offline:

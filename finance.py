@@ -35,8 +35,7 @@ COLUMNS = ["Card", "Set", "#", "Finish", "Rarity", "Price", "Change", "Change %"
 
 SHOW_SPIKES, SHOW_DROPS, SHOW_ALL = "Biggest spikes", "Biggest drops", "Everything"
 
-# Scryfall finish -> (foil code stored with prices, Scryfall price key)
-FINISHES = {"nonfoil": (0, "usd"), "foil": (1, "usd_foil"), "etched": (2, "usd_etched")}
+FINISHES = scryfall.PRICE_KEYS
 FINISH_LABELS = {0: "", 1: "Foil", 2: "Etched"}
 
 # MTGJSON's history is re-read this often, filling in days the app wasn't opened
@@ -82,49 +81,6 @@ def watch_records(data):
     } for finish, (code, key) in FINISHES.items() if finish in card.finishes]
 
 
-# Scryfall layouts that aren't cards you put in a deck
-_NOT_DECK_CARDS = {"token", "double_faced_token", "emblem", "art_series", "vanguard", "scheme", "planar",
-                   "augment", "host", "reversible_card"}
-
-
-def oracle_record(data):
-    # The card database row for a raw Scryfall card dict (see db.replace_oracle_cards),
-    # or None for tokens, emblems and the like
-    if data.get("layout") in _NOT_DECK_CARDS or data.get("set_type") == "memorabilia":
-        return None
-    faces = data.get("card_faces") or []
-    front = faces[0] if faces else {}
-    finishes = data.get("finishes") or []
-    finish = next((f for f in FINISHES if f in finishes), "nonfoil")
-    code, price_key = FINISHES[finish]
-    price = (data.get("prices") or {}).get(price_key)
-    return {
-        "name": data["name"],
-        "type_line": data.get("type_line") or front.get("type_line", ""),
-        "mana_cost": data.get("mana_cost") or front.get("mana_cost", ""),
-        "cmc": data.get("cmc", 0),
-        "colors": "".join(data.get("colors") or front.get("colors") or []),
-        "color_identity": "".join(data.get("color_identity") or []),
-        "oracle_text": data.get("oracle_text") or "\n\n".join(f.get("oracle_text", "") for f in faces),
-        "legalities": json.dumps(data.get("legalities") or {}),
-        "scryfall_id": data["id"],
-        "set_code": (data.get("set") or "").upper(),
-        "set_name": data.get("set_name"),
-        "collector_number": data.get("collector_number"),
-        "rarity": data.get("rarity"),
-        "image_url": scryfall.image_url_for(scryfall.Card(data)),
-        "foil": code,
-        "price": float(price) if price else None,
-        "edhrec_rank": data.get("edhrec_rank"),
-        "oracle_id": data.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
-        # Printed stats of the card (its front face), for the rules calculators
-        "power": data.get("power") or front.get("power"),
-        "toughness": data.get("toughness") or front.get("toughness"),
-        "loyalty": data.get("loyalty") or front.get("loyalty"),
-        "game_changer": int(bool(data.get("game_changer"))),
-    }
-
-
 def _printing_rank(data):
     # Which printing stands for a card in the card list: a regular booster printing
     # over promos and variants, newest first
@@ -167,7 +123,7 @@ def update_market(last_bulk, last_backfill, track_new=False, history=True, progr
             records.extend(watch_records(data))
             rank = _printing_rank(data)
             if data["name"] not in cards or rank > cards[data["name"]][0]:
-                card = oracle_record(data)
+                card = scryfall.oracle_record(data)
                 if card is not None:
                     cards[data["name"]] = (rank, card)
         db.watch_cards(records, track_new)

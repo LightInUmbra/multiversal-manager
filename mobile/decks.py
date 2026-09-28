@@ -1,0 +1,276 @@
+# The phone's Deck Builder: decks, binders and wishlists (the desktop's lists), with each
+# format's rules and Commander brackets. Rules, legality and brackets are the desktop's own
+# (formats.py, brackets.py). Instead of the desktop's whole card database, the phone looks
+# up just the cards in its lists on Scryfall.
+import flet as ft
+
+import brackets
+import database as db
+import formats
+import scryfall
+from importer import SECTIONS
+
+# The same names as the desktop's lists.py (a Qt window, so not importable here)
+KINDS = {"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
+SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
+                  "Sideboard": "Sideboard", "Maybeboard": "Maybeboard", "": "Cards"}
+RED = ft.Colors.RED_400
+
+
+def _money(value):
+    return f"${value:,.2f}" if value is not None else "—"
+
+
+def _number(field):
+    # A text field's whole number, or None (with the field marked) when it isn't one
+    try:
+        return int(field.value)
+    except (TypeError, ValueError):
+        field.error_text = "Enter a number"
+        return None
+
+
+class Decks:
+    def __init__(self, page, toast, busy, card_dialog):
+        self.page, self.toast, self.busy, self.card_dialog = page, toast, busy, card_dialog
+        self.list_id = None  # the open list, or None for the list of lists
+        self.spellbook = {}  # list id -> Commander Spellbook's reading, until the list changes
+        self.view = ft.Column(expand=True)
+
+    def refresh(self):
+        # Redraws whatever is showing, e.g. after a sync (which may have deleted the open list)
+        if self.list_id is not None and self._info() is None:
+            self.list_id = None
+        self.show_list() if self.list_id is not None else self.show_all()
+
+    def fab(self):
+        # What the + button does here
+        self.add_card() if self.list_id is not None else self.new_list()
+
+    def _info(self):
+        return next((l for l in db.get_lists() if l["id"] == self.list_id), None)
+
+    def _changed(self):
+        self.spellbook.pop(self.list_id, None)
+        self.show_list()
+
+    # Every list
+
+    def show_all(self):
+        tiles = [ft.ListTile(
+            title=ft.Text(l["name"]),
+            subtitle=ft.Text(" · ".join([KINDS.get(l["kind"], l["kind"]),
+                                         *([formats.label(l["format"])] if l["kind"] == "deck" else []),
+                                         f"{l['cards']} cards"])),
+            trailing=ft.Text(_money(l["value"])), on_click=lambda e, l=l: self.open(l["id"]))
+            for l in db.get_lists()]
+        self.view.controls = [ft.ListView(tiles or [ft.Text("No decks yet. Tap + to make one.")], expand=True)]
+        self.page.update()
+
+    def new_list(self):
+        name = ft.TextField(label="Name", autofocus=True)
+        kind = ft.Dropdown(label="Kind", value="deck", options=[ft.DropdownOption(key=k, text=t) for k, t in KINDS.items()])
+        fmt = ft.Dropdown(label="Format", value="commander", options=[
+            ft.DropdownOption(key=k, text=f.label) for k, f in formats.FORMATS.items()])
+        kind.on_select = lambda e: (setattr(fmt, "visible", kind.value == "deck"), self.page.update())
+
+        def create(e):
+            if not name.value.strip():
+                return
+            self.page.pop_dialog()
+            self.open(db.create_list(name.value.strip(), kind.value, fmt.value if kind.value == "deck" else "casual"))
+
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text("New List"), content=ft.Column([name, kind, fmt], tight=True),
+            actions=[ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
+                     ft.TextButton("Create", on_click=create)]))
+
+    # One list
+
+    def open(self, list_id):
+        self.list_id = list_id
+        self.show_list()
+        self.fill_card_data()
+
+    def fill_card_data(self):
+        # Types, colors and legality of cards this phone hasn't looked up yet
+        missing = [e["name"] for e in db.get_list_entries(self.list_id) if e["legalities"] is None]
+        if missing:
+            rows = self.busy("Looking up cards", lambda: scryfall.fetch_card_data(missing))
+            if rows:
+                db.add_oracle_cards(rows)
+                self.show_list()
+
+    def show_list(self):
+        info = self._info()
+        entries = db.get_list_entries(self.list_id)
+        owned = db.owned_by_name()
+        is_deck = info["kind"] == "deck"
+        problems, statuses = formats.validate(entries, info["format"]) if is_deck else ([], {})
+
+        def back(e):
+            self.list_id = None
+            self.show_all()
+
+        cards = sum(e["quantity"] for e in entries)
+        value = sum(e["quantity"] * (e["price"] or 0) for e in entries)
+        summary = [f"{cards} cards · {_money(value)}"]
+        if is_deck:
+            summary.append(formats.label(info["format"]))
+            types = formats.type_counts(entries)
+            if types:
+                summary.append(" · ".join(f"{n} {t}" for t, n in types.items()))
+        controls = [
+            ft.Row([ft.IconButton(ft.Icons.ARROW_BACK, tooltip="All lists", on_click=back),
+                    ft.Text(info["name"], size=20, weight=ft.FontWeight.BOLD, expand=True),
+                    ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
+                                  on_click=lambda e: self.edit_list(info))]),
+            *[ft.Text(line) for line in summary],
+            *[ft.Text(p, color=RED) for p in problems],
+        ]
+        if is_deck and formats.FORMATS.get(info["format"], formats.FORMATS["casual"]).commander:
+            controls.append(self.bracket_panel(info, entries))
+
+        # A deck shows its Main Deck even when empty, and any other section that has cards
+        sections = SECTIONS if is_deck else [""]
+        sections = sections + sorted({e["section"] for e in entries} - set(sections))
+        for section in sections:
+            group = [e for e in entries if e["section"] == section]
+            if not group and not (is_deck and section == "Main"):
+                continue
+            controls.append(ft.Text(f"{SECTION_TITLES.get(section, section)} ({sum(e['quantity'] for e in group)})",
+                                    weight=ft.FontWeight.BOLD))
+            for e in group:
+                status = statuses.get(e["id"])
+                have = owned.get(e["name"].lower(), 0)
+                controls.append(ft.ListTile(
+                    title=ft.Text(f"{e['quantity']}× {e['name']}", color=RED if status else None),
+                    subtitle=ft.Text(status or e["type_line"] or "", color=RED if status else None),
+                    trailing=ft.Text(f"own {have}" if have else "not owned"), dense=True,
+                    on_click=lambda ev, e=e: self.edit_entry(e, is_deck)))
+        if not entries:
+            controls.append(ft.Text("No cards yet. Tap + to add some."))
+        self.view.controls = [ft.ListView(controls, expand=True)]
+        self.page.update()
+
+    def bracket_panel(self, info, entries):
+        spellbook = self.spellbook.get(self.list_id)
+        report = brackets.check(entries, spellbook)
+        low = report.minimum()
+        fits = {1: "Bracket 1 or 2 (Exhibition or Core: that's down to the deck's intent)",
+                4: "Bracket 4 or 5 (Optimized or cEDH: that's down to the deck's intent)"}.get(low, brackets.label(low))
+        target = ft.Dropdown(label="Aiming for", value=str(info["bracket"] or ""), options=[
+            ft.DropdownOption(key="", text="No bracket chosen"),
+            *[ft.DropdownOption(key=str(b.number), text=brackets.label(b.number)) for b in brackets.BRACKETS]])
+
+        def aim(e):
+            db.set_list_bracket(self.list_id, int(target.value) if target.value else None)
+            self.show_list()
+
+        target.on_select = aim
+        lines = [ft.Text(f"These cards fit {fits}.", weight=ft.FontWeight.BOLD)]
+        if info["bracket"]:
+            lines += [ft.Text(f"{why}: {', '.join(names)}", color=RED) for why, names in report.broken(info["bracket"])]
+        found = [("Game Changers", report.game_changers), ("Mass land denial", report.mass_land_denial),
+                 ("Extra turns", report.extra_turns)]
+        if spellbook is not None:
+            found.append(("Two-card combos", [f"{' + '.join(c.cards)} ({c.results})" for c in report.combos]))
+        lines += [ft.Text(f"{title}: {', '.join(names) or 'none'}", size=13) for title, names in found]
+        if spellbook is None:
+            lines.append(ft.TextButton("Check for combos (Commander Spellbook)", on_click=self.check_combos))
+        return ft.Column([target, *lines], tight=True)
+
+    def check_combos(self, e):
+        entries = db.get_list_entries(self.list_id)
+        commanders = [x["name"] for x in entries if x["section"] == "Commander"]
+        main = [x["name"] for x in entries if x["section"] == "Main"]
+        found = self.busy("Checking combos", lambda: brackets.fetch_spellbook(commanders, main))
+        if found is not None:
+            self.spellbook[self.list_id] = found
+            self.show_list()
+
+    def edit_list(self, info):
+        name = ft.TextField(label="Name", value=info["name"])
+        fmt = ft.Dropdown(label="Format", value=info["format"], visible=info["kind"] == "deck", options=[
+            ft.DropdownOption(key=k, text=f.label) for k, f in formats.FORMATS.items()])
+        delete = ft.TextButton("Delete")
+
+        def save(e):
+            self.page.pop_dialog()
+            if name.value.strip() and name.value.strip() != info["name"]:
+                db.rename_list(self.list_id, name.value.strip())
+            if fmt.value != info["format"]:
+                db.set_list_format(self.list_id, fmt.value)
+            self._changed()
+
+        def delete_clicked(e):
+            # A second tap confirms
+            if delete.data:
+                self.page.pop_dialog()
+                db.delete_list(self.list_id)
+                self.list_id = None
+                self.show_all()
+                self.toast(f"Deleted {info['name']}.")
+            else:
+                delete.data = True
+                delete.content = "Tap again to delete"
+                self.page.update()
+
+        delete.on_click = delete_clicked
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text(KINDS.get(info["kind"], "List")), content=ft.Column([name, fmt], tight=True),
+            actions=[delete, ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
+                     ft.TextButton("Save", on_click=save)]))
+
+    def edit_entry(self, entry, is_deck):
+        quantity = ft.TextField(label="Quantity", value=str(entry["quantity"]), keyboard_type=ft.KeyboardType.NUMBER)
+        section = ft.Dropdown(label="Section", value=entry["section"], visible=is_deck,
+                              options=[ft.DropdownOption(key=s, text=SECTION_TITLES[s]) for s in SECTIONS])
+        remove = ft.TextButton("Remove")
+
+        def save(e):
+            count = _number(quantity)
+            if count is None:
+                self.page.update()
+                return
+            self.page.pop_dialog()
+            if count < 1:
+                db.remove_list_entries([entry["id"]])
+            else:
+                db.update_list_entry(entry["id"], quantity=count, section=section.value if is_deck else entry["section"])
+            self._changed()
+
+        def remove_clicked(e):
+            if remove.data:
+                self.page.pop_dialog()
+                db.remove_list_entries([entry["id"]])
+                self._changed()
+            else:
+                remove.data = True
+                remove.content = "Tap again to remove"
+                self.page.update()
+
+        remove.on_click = remove_clicked
+        details = [ft.Image(src=entry["image_url"], height=280)] if entry["image_url"] else []
+        if entry["oracle_text"]:
+            details.append(ft.Text(entry["oracle_text"], size=13))
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text(entry["name"]), scrollable=True,
+            content=ft.Column([*details, quantity, section], tight=True),
+            actions=[remove, ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
+                     ft.TextButton("Save", on_click=save)]))
+
+    def add_card(self):
+        info = self._info()
+        is_deck = info["kind"] == "deck"
+        section = ft.Dropdown(label="Section", value="Main" if is_deck else "", visible=is_deck,
+                              options=[ft.DropdownOption(key=s, text=SECTION_TITLES[s]) for s in SECTIONS])
+
+        def added(card, finish, count):
+            db.add_list_entries(self.list_id, [scryfall.card_record(card, finish, count)],
+                                section.value if is_deck else "")
+            self.toast(f"Added {count}× {card.name} to {info['name']}.")
+            self._changed()
+            self.fill_card_data()
+
+        self.card_dialog(f"Add to {info['name']}", [section], added)

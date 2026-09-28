@@ -124,7 +124,7 @@ def validate(entries, key):
     # Command zone and color identity
     if fmt.commander:
         if not commanders:
-            problems.append("Choose a commander: right-click a card and move it to Commander.")
+            problems.append("Choose a commander: move a card to the Commander section.")
         else:
             identity = set("".join(e["color_identity"] or "" for e in commanders))
             for e in counted:
