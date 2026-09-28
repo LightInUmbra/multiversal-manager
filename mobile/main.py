@@ -1,6 +1,9 @@
 # Multiversal Manager for phones, in Flet. The collection, prices and sync are the desktop
 # app's own modules (database, scryfall, sync, copy_details); build_apk.py copies them in
 # next to this file. The phone keeps its own collection.db and syncs it like the desktop.
+# build_web.py builds the same app for the browser, where Python has no threads and its
+# files are gone after a reload (see WEB).
+import asyncio
 import sys
 import threading
 import time
@@ -13,6 +16,7 @@ if (_REPO / "database.py").exists():
 
 import flet as ft  # noqa: E402
 
+import card_form  # noqa: E402
 import copy_details  # noqa: E402
 import database as db  # noqa: E402
 import decks  # noqa: E402
@@ -20,13 +24,23 @@ import rules_tab  # noqa: E402
 import scan  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
+import theme  # noqa: E402
+import web_desktop  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
 BACK_TO_EXIT = 2  # seconds to press back again to leave the app
-
+# In the browser (Pyodide): no threads, no camera reader, and a database that starts empty on
+# every visit, so the sign-in is kept in the browser's storage and sync brings the cards back
+WEB = sys.platform == "emscripten"
+ACCOUNT_KEYS = ("account_token", "account_email")
+# Below this width, the first-visit question suggests the phone layout
+WIDE = 900
+LAYOUT_KEY = "layout"  # the browser's answer: "desktop" or "mobile"
+GITHUB_URL = "https://github.com/LightInUmbra/multiversal-manager"
 
 def _money(value):
-    return f"${value:,.2f}" if value is not None else "—"
+    # Scryfall has no price for some printings; a dash, like the desktop, rather than $0.00
+    return f"${value:,.2f}" if value else "—"
 
 
 def _options(mapping):
@@ -35,14 +49,20 @@ def _options(mapping):
 
 def main(page: ft.Page):
     page.title = APP_NAME
+    theme.apply(page)
     db.create_table()
 
     # The sign-in lives in the phone's own database, next to the sync cursors
+    # (and in the browser's storage too on the web, since the database doesn't last there)
+    prefs = ft.SharedPreferences()
+
     def setting(key, value=...):
         with db._connect() as conn:
             if value is ...:
                 return sync._get(conn, key)
             sync._set(conn, key, value)
+        if WEB and key in ACCOUNT_KEYS:
+            page.run_task(prefs.remove, key) if value is None else page.run_task(prefs.set, key, value)
 
     # Feedback
 
@@ -78,7 +98,24 @@ def main(page: ft.Page):
                  copy_details.language_label(row["language"]) if row["language"] != copy_details.DEFAULT_LANGUAGE else "")
         return " · ".join(p for p in parts if p)
 
+    # The website asks each browser once whether to look like the desktop app or the phone app
+    # (see choose_layout); the phone app is always the phone layout
+    layout = {"desktop": False}
+
+    def desktop_layout():
+        return layout["desktop"]
+
+    def resized(e):
+        # The desktop layout's table widths follow the window
+        if desktop_layout() and page.navigation_bar.selected_index == 0:
+            cards_page.refresh()
+
+    page.on_resize = resized
+
     def show_cards():
+        if desktop_layout():
+            cards_page.refresh()
+            return
         text = (search.value or "").lower()
         rows = [r for r in db.get_all_cards()
                 if text in f"{r['name']} {r['set_name']} {r['artist'] or ''}".lower()]
@@ -87,7 +124,7 @@ def main(page: ft.Page):
                         trailing=ft.Text(_money(r["price"])), on_click=lambda e, r=r: edit_card(r))
             for r in rows]
         _, cards, value = db.get_summary()
-        summary.value = f"{cards} cards · {_money(value)}"
+        summary.value = f"{cards} cards · ${value:,.2f}"
         page.update()
 
     def edit_card(row):
@@ -281,19 +318,28 @@ def main(page: ft.Page):
             if not quiet or applied:
                 toast(f"Synced: sent {pushed}, received {applied}.")
 
-    def auto_sync():
+    def auto_sync_check():
         # While signed in: shortly after an edit, and every couple of minutes for other devices' changes
+        try:
+            waited = time.monotonic() - last_sync["at"]
+            if setting("account_token") and not (last_sync["failed"] and waited < sync.RETRY_AFTER):
+                with db._connect() as conn:
+                    changed = sync.has_local_changes(conn)
+                if changed or waited >= sync.PULL_EVERY:
+                    sync_now(quiet=True)
+        except Exception:
+            pass  # e.g. the database busy for a moment; the next round tries again
+
+    async def auto_sync():
+        if WEB:
+            for key in ACCOUNT_KEYS:
+                value = await prefs.get(key)
+                if value:
+                    setting(key, value)
         while True:
-            try:
-                waited = time.monotonic() - last_sync["at"]
-                if setting("account_token") and not (last_sync["failed"] and waited < sync.RETRY_AFTER):
-                    with db._connect() as conn:
-                        changed = sync.has_local_changes(conn)
-                    if changed or waited >= sync.PULL_EVERY:
-                        sync_now(quiet=True)
-            except Exception:
-                pass  # e.g. the database busy for a moment; the next round tries again
-            time.sleep(sync.EDIT_DELAY)
+            # The browser has no threads, so there the check (and any sync) runs in place
+            auto_sync_check() if WEB else await asyncio.to_thread(auto_sync_check)
+            await asyncio.sleep(sync.EDIT_DELAY)
 
     def account(e):
         if setting("account_token"):
@@ -340,15 +386,104 @@ def main(page: ft.Page):
     # Layout
 
     page.appbar = ft.AppBar(title=ft.Text(APP_NAME), actions=[
-        ft.IconButton(ft.Icons.DOCUMENT_SCANNER_OUTLINED, tooltip="Scan cards",
+        ft.IconButton(ft.Icons.DOCUMENT_SCANNER_OUTLINED, tooltip="Scan cards", visible=not WEB,
                       on_click=lambda e: page.run_task(open_scanner)),
         ft.IconButton(ft.Icons.PRICE_CHANGE_OUTLINED, tooltip="Refresh prices", on_click=refresh_prices),
         ft.IconButton(ft.Icons.SYNC, tooltip="Sync now", on_click=sync_now),
         ft.IconButton(ft.Icons.ACCOUNT_CIRCLE_OUTLINED, tooltip="Sync account", on_click=account),
+        ft.IconButton(ft.Icons.DESKTOP_WINDOWS_OUTLINED, tooltip="Desktop layout", visible=page.web,
+                      on_click=lambda e: set_layout(True)),
     ])
     deck_builder = decks.Decks(page, toast, busy, card_dialog)
-    collection = ft.Column([search, summary, card_list], expand=True)
-    body = ft.Container(collection, expand=True)
+    body = ft.Container(expand=True)
+
+    def collection_view():
+        return cards_page.view if desktop_layout() else ft.Column([search, summary, card_list], expand=True)
+
+    # The desktop layout's header, in place of the phone's app bar and bottom bar
+    def open_url(url):
+        page.run_task(ft.UrlLauncher().launch_url, url)
+
+    def go_to(index):
+        page.navigation_bar.selected_index = index
+        switch(None)
+
+    desktop_top = ft.Column(spacing=0, visible=False)
+
+    def show_header():
+        desktop_top.controls = [web_desktop.header(
+            page.navigation_bar.selected_index, go_to, sync_now, setting("account_email"),
+            [("Sync account…", account), ("Refresh prices", refresh_prices),
+             ("Mobile layout", lambda e: set_layout(False)),
+             ("Multiversal Manager on GitHub", lambda e: open_url(GITHUB_URL)),
+             ("Scryfall", lambda e: open_url("https://scryfall.com"))])]
+
+    def relayout():
+        # Swaps between the phone's layout and the desktop's
+        is_desktop = desktop_layout()
+        page.appbar.visible = not is_desktop
+        page.navigation_bar.visible = not is_desktop
+        desktop_top.visible = is_desktop
+        page.padding = 0 if is_desktop else 10  # the website's header runs edge to edge
+        switch(None)
+
+    def set_layout(desktop, remember=True):
+        layout["desktop"] = desktop
+        if remember:
+            page.run_task(prefs.set, LAYOUT_KEY, "desktop" if desktop else "mobile")
+        relayout()
+
+    def choose_layout():
+        # Asked on a browser's first visit; either layout can switch to the other later
+        suggested = (page.width or 0) >= WIDE
+
+        def option(desktop, icon, title, text):
+            return ft.Card(ft.Container(ft.ListTile(
+                leading=ft.Icon(icon, size=36), title=ft.Text(title, weight=ft.FontWeight.BOLD),
+                subtitle=ft.Text(text + ("\nSuggested for this screen." if desktop == suggested else "")),
+                on_click=lambda e: (page.pop_dialog(), set_layout(desktop))), padding=6), margin=0)
+
+        page.show_dialog(ft.AlertDialog(
+            modal=True, title=ft.Text(f"Welcome to {APP_NAME}", text_align=ft.TextAlign.CENTER),
+            # The options fill the box's width, so they sit centered under the title
+            content=ft.Column(width=min(460, (page.width or 460) - 96), horizontal_alignment=ft.CrossAxisAlignment.STRETCH, controls=[
+                ft.Text("Are you on a computer or a phone?"),
+                option(True, ft.Icons.DESKTOP_WINDOWS_OUTLINED, "Desktop",
+                       "The full desktop app: menus, tables and side panels. Best with a mouse and a big screen."),
+                option(False, ft.Icons.PHONE_ANDROID_OUTLINED, "Mobile",
+                       "The phone app: big buttons and one thing at a time, made for touch."),
+                ft.Text("You can switch later: View → Mobile Layout, or the desktop button at the top of the phone layout.",
+                        size=12, color=ft.Colors.ON_SURFACE_VARIANT)], tight=True)))
+
+    async def start():
+        # The phone app is always the phone layout; the website asks once, then remembers
+        saved = await prefs.get(LAYOUT_KEY) if page.web else "mobile"
+        if saved:
+            set_layout(saved == "desktop", remember=False)
+        else:
+            relayout()
+            choose_layout()
+
+    def desktop_add():
+        def saved(data):
+            card_id = db.add_card(**data)
+            cards_page.search.value = ""
+            cards_page.refresh(select_id=card_id)  # shown in the detail panel, like the desktop
+            toast(f"Added {data['quantity']}× {data['name']}.")
+
+        card_form.open_card_form(page, saved)
+
+    def desktop_edit(row):
+        def saved(data):
+            surviving_id = db.update_card(row["id"], **data)
+            cards_page.refresh(select_id=surviving_id)
+            if surviving_id != row["id"]:
+                toast("You already had that printing, so the two entries were combined.")
+
+        if row:
+            card_form.open_card_form(page, saved, existing=row)
+
+    cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices)
 
     rules_view = rules_tab.Rules(page, toast, busy)
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
@@ -365,7 +500,7 @@ def main(page: ft.Page):
 
     def close_scanner():
         scanner.close()
-        body.content = collection
+        body.content = collection_view()
         page.floating_action_button.visible = True
         show_cards()
 
@@ -373,8 +508,12 @@ def main(page: ft.Page):
         if scanner.active:
             scanner.close()
         index = page.navigation_bar.selected_index
-        body.content = tabs[index - 1].view if index else collection
-        page.floating_action_button.visible = index != 2  # nothing to add on Rules
+        body.content = tabs[index - 1].view if index else collection_view()
+        if index and desktop_layout():  # the page's margins under the website's header
+            body.content = ft.Container(body.content, padding=ft.Padding.symmetric(horizontal=web_desktop.PAGE_PADDING, vertical=16))
+        # Nothing to add on Rules, and the desktop layout's Cards tab has its own Add Card button
+        page.floating_action_button.visible = index == 1 or (index == 0 and not desktop_layout())
+        show_header()
         tabs[index - 1].refresh() if index else show_cards()
 
     page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
@@ -408,9 +547,9 @@ def main(page: ft.Page):
     page.floating_action_button = ft.FloatingActionButton(
         icon=ft.Icons.ADD, tooltip="Add",
         on_click=lambda e: deck_builder.fab() if page.navigation_bar.selected_index == 1 else add_card())
-    page.add(ft.SafeArea(ft.Column([progress, body], expand=True), expand=True))
-    show_cards()
-    page.run_thread(auto_sync)
+    page.add(ft.SafeArea(ft.Column([desktop_top, progress, body], expand=True, spacing=4), expand=True))
+    page.run_task(start)
+    page.run_task(auto_sync)
 
 
 if __name__ == "__main__":
