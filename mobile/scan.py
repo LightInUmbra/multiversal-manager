@@ -11,11 +11,15 @@ from flet_card_reader import CardReader
 import card_scan
 import copy_details
 import database as db
+import decks
+import formats
 import rules
 import scryfall
+from importer import SECTIONS
 
 MUTED = ft.Colors.ON_SURFACE_VARIANT
 READY = "Fill the frame with one card, flat and well lit, then tap the button."
+COLLECTION, NEW_LIST = "collection", "new"  # the Add to choices besides the lists themselves
 
 
 def _number(card):
@@ -42,6 +46,8 @@ class Scanner:
         self.reader = None
         self._names = None
         self._reading = False
+        # Where the last card went, so a stack of cards can be scanned into one deck
+        self.destination = {"target": COLLECTION, "section": "Main", "also": True}
         self.status = ft.Text(READY, color=ft.Colors.WHITE, text_align=ft.TextAlign.CENTER)
 
     def names(self):
@@ -138,6 +144,44 @@ class Scanner:
                 finish.value = str(codes[0])
             self.page.update()
 
+        # Where it goes: the collection, a deck, binder or wishlist, or a new one made here
+        lists = {str(l["id"]): l for l in db.get_lists()}
+        remembered = self.destination
+        target = ft.Dropdown(label="Add to", value=remembered["target"] if remembered["target"] in lists
+                             else COLLECTION, options=[
+            ft.DropdownOption(key=COLLECTION, text="My collection"),
+            *[ft.DropdownOption(key=key, text=f"{l['name']} ({decks.KINDS.get(l['kind'], l['kind'])})")
+              for key, l in lists.items()],
+            ft.DropdownOption(key=NEW_LIST, text="New deck or list…")])
+        new_name = ft.TextField(label="Name of the new list")
+        new_kind = ft.Dropdown(label="Kind", value="deck", options=[
+            ft.DropdownOption(key=k, text=t) for k, t in decks.KINDS.items()])
+        new_format = ft.Dropdown(label="Format", value="commander", options=[
+            ft.DropdownOption(key=k, text=f.label) for k, f in formats.FORMATS.items()])
+        section = ft.Dropdown(label="Section", value=remembered["section"], options=[
+            ft.DropdownOption(key=x, text=decks.SECTION_TITLES[x]) for x in SECTIONS])
+        also = ft.Checkbox(label="Also add to my collection", value=remembered["also"])
+
+        def kind_of(key):
+            return new_kind.value if key == NEW_LIST else lists[key]["kind"] if key in lists else None
+
+        def show_target(pick_default=False):
+            key = target.value
+            to_list = key != COLLECTION
+            if pick_default and to_list:
+                also.value = kind_of(key) != "wishlist"  # a scanned card is yours, unless it's on a wishlist
+            new_name.visible = new_kind.visible = key == NEW_LIST
+            new_format.visible = key == NEW_LIST and new_kind.value == "deck"
+            section.visible = to_list and kind_of(key) == "deck"
+            also.visible = to_list
+            # Condition and language are the collection's
+            condition.visible = language.visible = not to_list or also.value
+            self.page.update()
+
+        target.on_select = lambda e: show_target(pick_default=True)
+        new_kind.on_select = lambda e: show_target(pick_default=True)
+        also.on_change = lambda e: show_target()
+
         def add(e):
             try:
                 count = int(quantity.value)
@@ -147,18 +191,37 @@ class Scanner:
                 quantity.error_text = "Enter a number"
                 self.page.update()
                 return
+            key = target.value
+            if key == NEW_LIST and not (new_name.value or "").strip():
+                new_name.error_text = "Name the new list"
+                self.page.update()
+                return
             chosen_card = printings[int(printing.value)]
-            db.add_card(**scryfall.card_record(chosen_card, int(finish.value), count),
-                        condition=condition.value, language=language.value)
+            record = scryfall.card_record(chosen_card, int(finish.value), count)
+            if key == NEW_LIST:
+                kind = new_kind.value
+                key = str(db.create_list(new_name.value.strip(), kind, new_format.value if kind == "deck" else "casual"))
+                lists[key] = next(l for l in db.get_lists() if str(l["id"]) == key)
+            places = []
+            if key != COLLECTION:
+                deck = lists[key]
+                db.add_list_entries(int(key), [record], section.value if deck["kind"] == "deck" else "")
+                places.append(deck["name"])
+            if key == COLLECTION or also.value:
+                db.add_card(**record, condition=condition.value, language=language.value)
+                places.append("your collection")
+            self.destination = {"target": key, "section": section.value, "also": also.value}
             self.page.pop_dialog()
-            self.toast(f"Added {count}× {chosen_card.name}.")
+            self.toast(f"Added {count}× {chosen_card.name} to {' and '.join(places)}.")
             self.on_added()
             self._say(f"Added {chosen_card.name}. " + READY)
 
         printing.on_select = show_finishes
         show_finishes()
+        show_target()
         self.page.show_dialog(ft.AlertDialog(
             title=ft.Text(card.name), scrollable=True,
-            content=ft.Column([image, note, printing, finish, quantity, condition, language], tight=True, spacing=12),
+            content=ft.Column([image, note, printing, finish, quantity, target, new_name, new_kind, new_format,
+                               section, also, condition, language], tight=True, spacing=12),
             actions=[ft.TextButton("Not this card", on_click=lambda e: self.page.pop_dialog()),
                      ft.TextButton("Add", on_click=add)]))
