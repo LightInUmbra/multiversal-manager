@@ -16,6 +16,7 @@ from datetime import datetime
 from pathlib import Path
 
 import database as db
+import sync
 
 KEEP = 10
 
@@ -99,3 +100,5 @@ def restore(path):
     except sqlite3.DatabaseError as error:
         raise ValueError(f"{Path(path).name} isn't a Multiversal Manager backup ({error}).") from None
     db.create_table()  # upgrades backups made by older versions
+    with db._connect() as conn:
+        sync.after_restore(conn)

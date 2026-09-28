@@ -192,6 +192,41 @@ def test_same_card_added_on_both_becomes_one_entry(devices):
     assert {r["notes"] for r in db.get_all_cards()} == {"from the precon\ntraded", ""}
 
 
+def test_restored_backup_wins_on_every_device(devices, tmp_path):
+    import shutil
+
+    import backup
+    on, remote = devices
+    pc_card, _ = _both_have_one_sol_ring(on, remote)
+    on("pc")
+    shutil.copy(db.DB_NAME, tmp_path / "backup.db")
+
+    _tick()
+    on("phone")
+    db.update_quantity(db.get_all_cards()[0]["id"], 9)
+    db.add_card("Arcane Signet", "C21", 1.0, 1, scryfall_id="b")
+    sync.sync(remote)
+    on("pc")
+    sync.sync(remote)
+    assert _cards() == {("Sol Ring", 9), ("Arcane Signet", 1)}
+
+    _tick()
+    backup.restore(tmp_path / "backup.db")
+    sync.sync(remote)
+    assert _cards() == {("Sol Ring", 2)}
+    on("phone")
+    sync.sync(remote)
+    assert _cards() == {("Sol Ring", 2)}
+
+    # Afterwards, edits sync as usual again
+    _tick()
+    db.add_card("Arcane Signet", "C21", 1.0, 1, scryfall_id="b")
+    sync.sync(remote)
+    on("pc")
+    sync.sync(remote)
+    assert _cards() == {("Sol Ring", 2), ("Arcane Signet", 1)}
+
+
 def test_merge_rules():
     base = {"quantity": 2, "notes": "", "condition": "NM"}
     assert sync.merge(base, {**base, "quantity": 4}, {**base, "quantity": 3}, True)["quantity"] == 5

@@ -144,11 +144,25 @@ def _merge_duplicates(conn, table, row_id):
     conn.executemany(f"DELETE FROM {table} WHERE id = ?", [(r["id"],) for r in rest])
 
 
+def after_restore(conn):
+    """A restored backup replaces the collection on every device: everything in it is
+    stamped now, so it wins, and the next sync pulls everything again to delete what the
+    backup doesn't have (see apply)."""
+    now = conn.execute(f"SELECT {db.SYNC_NOW}").fetchone()[0]
+    for table in TABLES:
+        conn.execute(f"UPDATE {table} SET updated_at = ?", (now,))
+    conn.execute("UPDATE sync_tombstones SET deleted_at = ?", (now,))
+    conn.execute("DELETE FROM sync_shadow")
+    _set(conn, "pulled_until", None)
+    _set(conn, "restored_at", now)
+
+
 def apply(conn, records):
     """Brings in records from other devices, merging with what changed here since the
     last sync. Table and column names come from the remote, so only known ones are used.
     Returns how many records changed something here."""
     order = {table: i for i, table in enumerate(TABLES)}
+    restored = _get(conn, "restored_at")
     applied, written = 0, []
     for r in sorted((r for r in records if r["tbl"] in order), key=lambda r: order[r["tbl"]]):
         table, uid, stamp = r["tbl"], r["uid"], r["updated_at"]
@@ -162,6 +176,11 @@ def apply(conn, records):
         mine = row["updated_at"] if row else tomb["deleted_at"] if tomb else None
         _remember(conn, [r])
         row_id = row["id"] if row else None
+        if restored and stamp < restored:
+            # From before a backup was restored here: the backup wins, and what it doesn't have goes
+            if not row and not tomb:
+                _delete(conn, table, uid, None, restored)
+            continue
         changed_here = mine is not None and mine != (shadow["updated_at"] if shadow else None)
 
         if not changed_here or (stamp > mine and (r["deleted"] or not row or not (shadow and shadow["data"]))):
@@ -196,6 +215,7 @@ def sync(remote):
     with db._connect() as conn:
         applied = apply(conn, records)
         _set(conn, "pulled_until", cursor)
+        _set(conn, "restored_at", None)  # everything from before it has been pulled and dealt with
         changes = local_changes(conn)
     if changes:
         remote.push(changes)
