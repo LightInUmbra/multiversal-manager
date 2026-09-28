@@ -231,3 +231,7 @@ multiversal-manager/
 
 # The Android app's release signing key and its password (back them up; never commit them)
 mobile/signing/
+
+# ...but keep the card reader extension's Dart code: a Flutter package keeps it in lib/,
+# which the Python rule near the top would otherwise leave out of the repository
+!mobile/card_reader/src/flutter/flet_card_reader/lib/
