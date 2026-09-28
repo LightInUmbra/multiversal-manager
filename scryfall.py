@@ -1,9 +1,11 @@
 """
 Thin adapter between the app and Magic-Projects' ScryFunctions module.
 
-Printing lookups go through ScryFunctions (and its Card class). The few extra
-endpoints this app needs that ScryFunctions doesn't cover yet -- autocomplete,
-fuzzy name lookup, batch price refresh, and image downloads -- live here.
+Scryfall lookups go through ScryFunctions (and its Card class): printings,
+autocomplete, fuzzy names, batch lookups (for imports and price refreshes) and card
+images. What's here is what only this app needs: offline mode (answering from the
+downloaded card list), the image cache on disk, the bulk data downloads, the set list
+and the community-tag searches behind the recommendations.
 
 Everything in this module does blocking network I/O, so the UI calls it from
 background threads (see background.py).
@@ -50,11 +52,11 @@ HEADERS = {
     "Accept": "application/json",
 }
 
+# ScryFunctions' requests identify as this app too
+sf.HEADERS["User-Agent"] = HEADERS["User-Agent"]
+
 # Scryfall asks for 50-100ms between API requests
 _REQUEST_DELAY = 0.1
-
-# /cards/collection accepts at most 75 identifiers per request
-_COLLECTION_BATCH = 75
 
 
 # Set from the File → Work Offline setting
@@ -181,8 +183,7 @@ def autocomplete(partial_name):
     # Up to 20 card names matching what's been typed so far
     if offline:
         return database.card_names(partial_name)
-    data = _get_json("/cards/autocomplete", {"q": partial_name})
-    return data["data"] if data else []
+    return sf.autocomplete(partial_name) or []
 
 
 def get_printings(name):
@@ -192,10 +193,10 @@ def get_printings(name):
         return _local_cards(name=name)
     printings = sf.get_all_printings(name)
     if not printings:
-        match = _get_json("/cards/named", {"fuzzy": name})
+        match = sf.search_fuzzy_card(name)
         if match is None:
             return []
-        printings = sf.get_all_printings(match["name"]) or [Card(match)]
+        printings = sf.get_all_printings(match.name) or [match]
     return sorted(printings, key=lambda c: c.released_at or "", reverse=True)
 
 
@@ -205,17 +206,9 @@ def get_collection(identifiers):
     # Returns the Cards found; identifiers with no match are simply absent.
     if offline:
         return _local_collection(identifiers)
-    cards = []
-    for start in range(0, len(identifiers), _COLLECTION_BATCH):
-        response = requests.post(
-            f"{sf.BASE_URL}/cards/collection",
-            json={"identifiers": identifiers[start:start + _COLLECTION_BATCH]},
-            headers=HEADERS,
-            timeout=TIMEOUT,
-        )
-        time.sleep(_REQUEST_DELAY)
-        response.raise_for_status()
-        cards.extend(Card(data) for data in response.json()["data"])
+    cards = sf.get_collection(identifiers)
+    if cards is None:
+        raise requests.HTTPError("Scryfall couldn't look those cards up.")
     return cards
 
 
@@ -244,8 +237,7 @@ def fuzzy_card(name):
     # Scryfall's best guess for a misspelled or alternate card name, or None
     if offline:
         return None
-    data = _get_json("/cards/named", {"fuzzy": name})
-    return Card(data) if data else None
+    return sf.search_fuzzy_card(name)
 
 
 def get_set_codes():
@@ -303,7 +295,8 @@ def fetch_image(url):
         return cache_file.read_bytes()
 
     _require_online()
-    response = requests.get(url, headers={"User-Agent": HEADERS["User-Agent"]}, timeout=TIMEOUT)
-    response.raise_for_status()
-    cache_file.write_bytes(response.content)
-    return response.content
+    data = sf.get_card_image(url)
+    if data is None:
+        raise requests.HTTPError(f"Couldn't download the card image {url}")
+    cache_file.write_bytes(data)
+    return data
