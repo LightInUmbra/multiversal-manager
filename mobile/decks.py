@@ -6,8 +6,10 @@ import flet as ft
 
 import brackets
 import database as db
+import deck_stats
 import formats
 import scryfall
+import web_decks
 from importer import SECTIONS
 
 # The same names as the desktop's lists.py (a Qt window, so not importable here)
@@ -50,6 +52,7 @@ class Decks:
         self.page, self.toast, self.busy, self.card_dialog = page, toast, busy, card_dialog
         self.list_id = None  # the open list, or None for the list of lists
         self.spellbook = {}  # list id -> Commander Spellbook's reading, until the list changes
+        self.stats = False   # showing a list's stats instead of its cards
         self.view = ft.Column(expand=True)
 
     def refresh(self):
@@ -75,6 +78,10 @@ class Decks:
 
     def _changed(self):
         self.spellbook.pop(self.list_id, None)
+        self.show_list()
+
+    def toggle_stats(self):
+        self.stats = not self.stats
         self.show_list()
 
     # Every list
@@ -145,12 +152,21 @@ class Decks:
                        ft.Text(" · ".join(facts), color=MUTED),
                        *([ft.Text(" · ".join(f"{n} {t}" for t, n in types.items()), size=13, color=MUTED)]
                          if types else [])], spacing=2, expand=True),
+            ft.IconButton(ft.Icons.LIST if self.stats else ft.Icons.BAR_CHART, tooltip="Cards" if self.stats else "Stats",
+                          on_click=lambda e: self.toggle_stats()),
             ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
                           on_click=lambda e: self.edit_list(info))], vertical_alignment=ft.CrossAxisAlignment.START)]
         if problems:
             controls.append(_box([_warning(p) for p in problems]))
         if is_deck and formats.FORMATS.get(info["format"], formats.FORMATS["casual"]).commander:
             controls.append(self.bracket_panel(info, entries))
+        if self.stats:
+            # The website's Stats tab, on the phone: curve, colors, types, most valuable
+            st = deck_stats.stats(entries, is_deck)
+            controls += web_decks.stats_controls(st) if st else [ft.Text("Add cards to see their stats.", color=MUTED)]
+            self.view.controls = [ft.ListView(controls, expand=True, spacing=8, padding=ft.Padding.symmetric(horizontal=4))]
+            self.page.update()
+            return
 
         # A deck shows its Main Deck even when empty, and any other section that has cards
         sections = SECTIONS if is_deck else [""]

@@ -7,6 +7,7 @@ lists.py (desktop), mobile/decks.py (phone) and mobile/web_decks.py (website) us
 import re
 from collections import Counter
 
+import formats
 from formats import MAIN_SECTIONS
 from importer import SECTIONS
 
@@ -92,3 +93,17 @@ def color_symbols(entries):
 def priciest(entries, n=5):
     # The n most valuable entries by price per copy, priciest first
     return sorted((e for e in entries if e["price"]), key=lambda e: -e["price"])[:n]
+
+
+def stats(entries, is_deck=True):
+    """Everything the Stats tab shows, for every app to draw its own way, or None with no
+    cards: curve, average (mana value, or None), colors (mana symbols), types ({type:
+    copies}, most first), lands, size, priciest. A deck counts its main deck and command
+    zone; a binder or wishlist every card."""
+    cards = counted(entries) if is_deck else [{**dict(e), "section": "Main"} for e in entries]
+    if not cards:
+        return None
+    types = formats.type_counts(cards)
+    return {"curve": mana_curve(cards), "average": average_mana_value(cards), "colors": color_symbols(cards),
+            "types": dict(sorted(types.items(), key=lambda kv: -kv[1])), "lands": types.get("Land", 0),
+            "size": sum(e["quantity"] for e in cards), "priciest": priciest(entries)}

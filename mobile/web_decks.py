@@ -57,6 +57,38 @@ COLOR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green"
 EXPLORE_SORTS = {"Name": ("name", "asc"), "Mana value": ("cmc", "asc"), "Price (high to low)": ("usd", "desc")}
 
 
+def stats_controls(st):
+    """The Stats tab's mana curve, colors, types and most valuable cards, drawn from
+    deck_stats.stats(): the website's and the phone's (mobile/decks.py)."""
+    peak = max(st["curve"].values()) or 1
+    bars = ft.Row([ft.Column([
+        ft.Text(str(n), size=11, color=theme.MUTED, text_align=ft.TextAlign.CENTER),
+        ft.Container(height=max(2, 100 * n / peak), border_radius=ft.BorderRadius.only(top_left=4, top_right=4),
+                     gradient=theme.gradient([theme.GOLD, theme.COLORS["secondary"]], vertical=True)),
+        ft.Text(f"{mv}+" if mv == deck_stats.CURVE_TOP else str(mv), size=11, text_align=ft.TextAlign.CENTER)],
+        spacing=3, horizontal_alignment=ft.CrossAxisAlignment.STRETCH, alignment=ft.MainAxisAlignment.END, expand=True)
+        for mv, n in st["curve"].items()], spacing=6, height=140, vertical_alignment=ft.CrossAxisAlignment.END)
+    all_symbols = sum(st["colors"].values()) or 1
+    colors = [ft.Row([_dot(c, 12), ft.Text(COLOR_NAMES[c], size=12, width=70),
+                      ft.Container(_bar(n / all_symbols, color=MANA.get(c, GENERIC)[0]), expand=True),
+                      ft.Text(f"{n} · {round(100 * n / all_symbols)}%", size=11.5, width=64, text_align=ft.TextAlign.RIGHT)],
+                     spacing=6) for c, n in st["colors"].items()]
+    most = max(st["types"].values(), default=1)
+    type_rows = [ft.Row([ft.Text(_type_title(t), size=12, width=96), ft.Container(_bar(n / most), expand=True),
+                         ft.Text(str(n), size=11.5, width=28, text_align=ft.TextAlign.RIGHT)], spacing=6)
+                 for t, n in st["types"].items()]
+    return [_heading("Mana curve"), bars,
+            ft.Text(f"Average mana value {st['average']:.2f}, lands left out" if st["average"] is not None
+                    else "No spells looked up yet.", size=12, color=theme.MUTED),
+            _heading("Colors"), *(colors or [ft.Text("No colored mana symbols.", size=12, color=theme.MUTED)]),
+            _heading("Types"), *type_rows,
+            ft.Text(f"{st['lands']} lands of {st['size']} cards ({round(100 * st['lands'] / st['size'])}%)", size=12,
+                    color=theme.MUTED),
+            _heading("Most valuable"),
+            *[ft.Row([ft.Text(e["name"], size=12.5, expand=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
+                      ft.Text(_money(e["price"]), size=12.5, color=theme.GOLD)]) for e in st["priciest"]]]
+
+
 def _scryfall_regex(pattern):
     # A / would end Scryfall's regular expression early (+1/+1)
     return pattern.replace("/", "\\/")
@@ -1094,42 +1126,10 @@ class DecksPage:
         self.refill_tab()
 
     def _stats(self, s):
-        # Binders and wishlists count every card; decks their main deck and command zone
-        counted = deck_stats.counted(s["entries"]) if s["is_deck"] else [{**dict(e), "section": "Main"} for e in s["entries"]]
-        if not counted:
+        st = deck_stats.stats(s["entries"], s["is_deck"])
+        if st is None:
             return ft.Text("Add cards to see their stats.", color=theme.MUTED)
-        curve = deck_stats.mana_curve(counted)
-        peak = max(curve.values()) or 1
-        bars = ft.Row([ft.Column([
-            ft.Text(str(n), size=11, color=theme.MUTED, text_align=ft.TextAlign.CENTER),
-            ft.Container(height=max(2, 100 * n / peak), border_radius=ft.BorderRadius.only(top_left=4, top_right=4),
-                         gradient=theme.gradient([theme.GOLD, theme.COLORS["secondary"]], vertical=True)),
-            ft.Text(f"{mv}+" if mv == deck_stats.CURVE_TOP else str(mv), size=11, text_align=ft.TextAlign.CENTER)],
-            spacing=3, horizontal_alignment=ft.CrossAxisAlignment.STRETCH, alignment=ft.MainAxisAlignment.END, expand=True)
-            for mv, n in curve.items()], spacing=6, height=140, vertical_alignment=ft.CrossAxisAlignment.END)
-        average = deck_stats.average_mana_value(counted)
-        symbols = deck_stats.color_symbols(counted)
-        all_symbols = sum(symbols.values()) or 1
-        colors = [ft.Row([_dot(c, 12), ft.Text(COLOR_NAMES[c], size=12, width=70),
-                          ft.Container(_bar(n / all_symbols, color=MANA.get(c, GENERIC)[0]), expand=True),
-                          ft.Text(f"{n} · {round(100 * n / all_symbols)}%", size=11.5, width=64, text_align=ft.TextAlign.RIGHT)],
-                         spacing=6) for c, n in symbols.items()]
-        types = formats.type_counts(counted)
-        most = max(types.values(), default=1)
-        type_rows = [ft.Row([ft.Text(_type_title(t), size=12, width=96), ft.Container(_bar(n / most), expand=True),
-                             ft.Text(str(n), size=11.5, width=28, text_align=ft.TextAlign.RIGHT)], spacing=6)
-                     for t, n in sorted(types.items(), key=lambda kv: -kv[1])]
-        lands, size = types.get("Land", 0), sum(e["quantity"] for e in counted)
-        controls = [_heading("Mana curve"), bars,
-                    ft.Text(f"Average mana value {average:.2f}, lands left out" if average is not None
-                            else "No spells looked up yet.", size=12, color=theme.MUTED),
-                    _heading("Colors"), *(colors or [ft.Text("No colored mana symbols.", size=12, color=theme.MUTED)]),
-                    _heading("Types"), *type_rows,
-                    ft.Text(f"{lands} lands of {size} cards ({round(100 * lands / size)}%)", size=12, color=theme.MUTED),
-                    _heading("Most valuable"),
-                    *[ft.Row([ft.Text(e["name"], size=12.5, expand=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-                              ft.Text(_money(e["price"]), size=12.5, color=theme.GOLD)])
-                      for e in deck_stats.priciest(s["entries"])]]
+        controls = stats_controls(st)
         if s["is_deck"]:
             controls += [_heading("Checks"), *self._checks(s)]
         return ft.Column(controls, spacing=8, scroll=ft.ScrollMode.AUTO, expand=True)

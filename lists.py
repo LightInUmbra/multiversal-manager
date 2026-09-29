@@ -7,12 +7,14 @@ The deck builder: decks, binders and wishlists in three panels.
   also get their Commander bracket, and can aim for one (see brackets.py).
 - Right: cards to add -- My Cards (your collection) or Explore (every card, from the
   card database), with search and filters, or Recommended: a page of cards for a
-  Commander deck's commander, worked out from the cards themselves (see recommendations.py).
+  Commander deck's commander, worked out from the cards themselves (see recommendations.py),
+  or Stats: the mana curve, colors, card types and most valuable cards (deck_stats.stats).
 
 Any printing you own counts toward a list's cards.
 """
 
 # Imports
+import html
 from datetime import date, datetime, timedelta, timezone
 
 from PySide6.QtCore import Qt, QTimer
@@ -27,6 +29,7 @@ from PySide6.QtWidgets import (
 import background
 import brackets
 import database as db
+import deck_stats
 import finance
 import formats
 import interactions
@@ -70,6 +73,45 @@ def _stale(entry):
 
 def _money(value):
     return f"${value:,.2f}" if value else "—"
+
+
+# The Stats tab's colors: the five mana colors, and colorless
+STAT_COLORS = {"W": ("White", "#c9b458"), "U": ("Blue", "#1f7bc8"), "B": ("Black", "#5e4b6b"),
+               "R": ("Red", "#d9453b"), "G": ("Green", "#2e9e5b"), "C": ("Colorless", "#8c8c8c")}
+STAT_BAR = "#4a78c2"
+
+
+def stats_html(st):
+    """The Stats tab (deck_stats.stats()) as plain HTML tables for a QTextBrowser: a row per
+    mana value, color and card type, each with a bar that's a shaded cell."""
+    def bar(fraction, color=STAT_BAR):
+        filled = max(1, round(100 * fraction)) if fraction else 0
+        return (f"<table width='100%' cellspacing='0' cellpadding='0'><tr>"
+                f"<td width='{filled}%' bgcolor='{color}'>&nbsp;</td><td width='{100 - filled}%'></td></tr></table>")
+
+    def rows(items):
+        # items: (label, bar html, number text)
+        return ("<table width='100%' cellspacing='2' cellpadding='1'>"
+                + "".join(f"<tr><td width='90'>{label}</td><td>{graph}</td><td width='70' align='right'>{number}</td></tr>"
+                          for label, graph, number in items) + "</table>")
+
+    curve, peak = st["curve"], max(st["curve"].values()) or 1
+    top = deck_stats.CURVE_TOP
+    parts = ["<h3>Mana curve</h3>",
+             rows([(f"{mv}+" if mv == top else str(mv), bar(n / peak), n) for mv, n in curve.items()]),
+             f"<p>Average mana value {st['average']:.2f}, lands left out.</p>" if st["average"] is not None
+             else "<p>No spells with a mana value yet.</p>"]
+    total = sum(st["colors"].values()) or 1
+    parts += ["<h3>Colors</h3>",
+              rows([(STAT_COLORS[c][0], bar(n / total, STAT_COLORS[c][1]), f"{n} · {round(100 * n / total)}%")
+                    for c, n in st["colors"].items()]) if st["colors"] else "<p>No colored mana symbols.</p>"]
+    most = max(st["types"].values(), default=1)
+    parts += ["<h3>Types</h3>", rows([(_plural(t, 2), bar(n / most), n) for t, n in st["types"].items()]),
+              f"<p>{st['lands']} lands of {st['size']} cards ({round(100 * st['lands'] / st['size'])}%).</p>",
+              "<h3>Most valuable</h3>",
+              "<table width='100%'>" + "".join(f"<tr><td>{html.escape(e['name'])}</td><td align='right'>{_money(e['price'])}</td></tr>"
+                                               for e in st["priciest"]) + "</table>"]
+    return "".join(parts)
 
 
 def _format_combo(current="casual"):
@@ -314,9 +356,11 @@ class ListsWindow(QWidget):
         self.card_tabs.addTab("My Cards")
         self.card_tabs.addTab("Explore")
         self.card_tabs.addTab("Recommended")
+        self.card_tabs.addTab("Stats")
         self.card_tabs.setTabToolTip(0, "Cards in your collection")
         self.card_tabs.setTabToolTip(1, "Every card in Magic, owned or not")
         self.card_tabs.setTabToolTip(2, "Cards for a Commander deck's commander, by the themes you pick")
+        self.card_tabs.setTabToolTip(3, "The list's mana curve, colors, card types and most valuable cards")
         self.card_tabs.currentChanged.connect(lambda _: self.search_cards())
 
         self.search_input = QLineEdit()
@@ -385,6 +429,7 @@ class ListsWindow(QWidget):
         self.recommend_panel.selected.connect(self.show_card)
         self.recommend_panel.activated.connect(lambda row: self.add_card(row, 1))
         self.recommend_panel.menu_requested.connect(self.show_card_menu)
+        self.stats_view = QTextBrowser()  # the Stats tab (stats_html)
         self._results = []
         self.results_label = QLabel()
         self.results_label.setStyleSheet("color: gray;")
@@ -401,6 +446,7 @@ class ListsWindow(QWidget):
         layout.addWidget(self.db_progress)
         layout.addWidget(self.card_browser, stretch=1)
         layout.addWidget(self.recommend_panel, stretch=1)
+        layout.addWidget(self.stats_view, stretch=1)
         layout.addWidget(self.results_label)
         return panel
 
@@ -536,7 +582,7 @@ class ListsWindow(QWidget):
         commander = self.is_commander_deck()
         for widget in (self.bracket_title, self.bracket_combo, self.bracket_label):
             widget.setVisible(commander)
-        self.legal_check.setVisible(deck and not self.recommending())
+        self.legal_check.setVisible(deck and not self.recommending() and not self.showing_stats())
         self.deck_tree.setColumnHidden(LEGAL_COL, not deck)
         self.deck_tree.clear()
         if self._list is None:
@@ -607,6 +653,8 @@ class ListsWindow(QWidget):
         self.refresh_prices()
         if self.recommending():
             self.update_recommendations()
+        if self.showing_stats():
+            self.update_stats()
 
     def _deck_item(self, entry, got, status):
         item = QTreeWidgetItem([
@@ -803,6 +851,13 @@ class ListsWindow(QWidget):
     def recommending(self):
         return self.card_tabs.currentIndex() == 2
 
+    def showing_stats(self):
+        return self.card_tabs.currentIndex() == 3
+
+    def update_stats(self):
+        st = deck_stats.stats(self._entries, self.is_deck()) if self._list is not None else None
+        self.stats_view.setHtml(stats_html(st) if st else "<p>Add cards to see their stats.</p>")
+
     def update_recommendations(self):
         panel = self.recommend_panel
         fmt = formats.FORMATS.get(self.deck_format(), formats.FORMATS["casual"])
@@ -823,11 +878,17 @@ class ListsWindow(QWidget):
 
     def search_cards(self):
         explore = self.card_tabs.currentIndex() == 1
-        recommending = self.recommending()
+        recommending, stats = self.recommending(), self.showing_stats()
         for widget in (self.search_input, self.filters, self.card_browser, self.results_label):
-            widget.setVisible(not recommending)
-        self.legal_check.setVisible(self.is_deck() and not recommending)
+            widget.setVisible(not recommending and not stats)
+        self.legal_check.setVisible(self.is_deck() and not recommending and not stats)
         self.recommend_panel.setVisible(recommending)
+        self.stats_view.setVisible(stats)
+        if stats:
+            for widget in (self.db_notice, self.db_button):
+                widget.hide()  # the stats come from the list itself, not the card database
+            self.update_stats()
+            return
         has_db = db.has_card_database()
         self.db_notice.setVisible(not has_db and not self._updating_cards)
         self.db_button.setVisible(not has_db and not self._updating_cards)
