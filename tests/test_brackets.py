@@ -67,7 +67,7 @@ def test_recommendations_leave_out_what_the_bracket_doesnt_allow():
 
     def row(name, **fields):
         return {"name": name, "type_line": "Enchantment", "oracle_text": "", "owned": 0, "price": 1.0,
-                "score": 5, "synergy": 90, "efficiency": 1.0, "edhrec_rank": 1, "staple": None, "type": "Enchantment",
+                "score": 5, "synergy": 90, "efficiency": 1.0,"staple": None, "type": "Enchantment",
                 "precon": False, "color_identity": "U", "game_changer": 0, **fields}
     pool = [row("Rhystic Study", game_changer=1), row("Mystic Remora")]
 

@@ -6,8 +6,8 @@
 # the desktop (synergy.py); like the desktop, other formats get none.
 #
 # The website has no downloaded card database, so it asks Scryfall only for what it needs:
-# the list's cards once, Explore a page at a time, and Recommended the most played cards in
-# the commander's colors and themes (kept for the visit).
+# the list's cards once, Explore a page at a time, and Recommended the cards whose text fits
+# the commander's colors and themes (kept for the visit). No play counts (EDHREC) anywhere.
 import json
 import time
 
@@ -49,13 +49,9 @@ GENERIC = ("#CFC7B0", "#1A1300")
 COLOR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green", "C": "Colorless"}
 
 
-def popularity_order(format_key):
-    """(Scryfall order, direction, how to say it) for the most played cards first. Scryfall's
-    only play counts are EDHREC's (Commander) and Penny Dreadful's; MTGO ticket prices were
-    tried for constructed and ranked poorly (Goblin Guide about 300th in Modern red)."""
-    if format_key == "penny":
-        return "penny", "asc", "most played in Penny Dreadful first"
-    return "edhrec", "auto", "most played in Commander first (Scryfall's play count)"
+# Explore's sort orders -> (Scryfall order, direction): the desktop's (db.CARD_SORTS), less
+# Owned, which Scryfall can't know. Never play counts: the app works from the cards themselves
+EXPLORE_SORTS = {"Name": ("name", "asc"), "Mana value": ("cmc", "asc"), "Price (high to low)": ("usd", "desc")}
 
 
 def _scryfall_regex(pattern):
@@ -179,7 +175,7 @@ class DecksPage:
         self.prepared = {}            # card name -> the card ready for scoring
         self.scored = {}              # (query, themes) -> synergy.score() result
         self.explore = {"query": "", "type": "", "rows": [], "page": 0, "more": False, "total": 0, "for": None,
-                        "format": "casual", "colors": True}
+                        "sort": "Name", "colors": True}
         self.mine = {"search": "", "type": "", "legal": True}
         self.rec = {"list": None, "themes": [], "offered": [], "owned": False, "staples": True, "price": "Any price",
                     "shown": {}}
@@ -869,21 +865,23 @@ class DecksPage:
         query = " ".join(x for x in (self.explore["query"], f"t:{self.explore['type']}" if self.explore["type"] else "",
                                      scope) if x) or "game:paper"
         if self.explore["for"] != query:
-            self.explore.update(rows=[], page=0, more=True, total=0, format=s["info"]["format"], **{"for": query})
+            self.explore.update(rows=[], page=0, more=True, total=0, **{"for": query})
             self.load_explore(show=False)
         search = _field("Search Scryfall: a name, or t:dragon, o:\"draw a card\", cmc<=2…", expand=True,
                         value=self.explore["query"], on_submit=lambda e: self._explore_set(query=e.control.value.strip()))
         filters = ft.Row([_dropdown(self.explore["type"], self._type_options(),
                                     lambda e: self._explore_set(type=e.control.value), 150),
+                          # A new order searches again from the first page
+                          _dropdown(self.explore["sort"], [(k, k) for k in EXPLORE_SORTS],
+                                    lambda e: self._explore_set(sort=e.control.value, **{"for": None}), 170),
                           ft.Checkbox(label="Deck's colors", value=self.explore["colors"],
                                       visible=s["is_deck"] and not s["fmt"].commander and bool(_colors(s["entries"])),
                                       on_change=lambda e: self._explore_set(colors=e.control.value)),
                           ft.Text(f"Within: {scope}" if scope else "Every card", size=12, color=theme.MUTED, expand=True,
                                   no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)], spacing=8)
         found = self.explore["rows"]
-        order = popularity_order(s["info"]["format"])[2]
-        note = ft.Text(f"{self.explore['total']:,} cards, {order}" if found else "No cards match.", size=12,
-                       color=theme.MUTED)
+        note = ft.Text(f"{self.explore['total']:,} cards, by {self.explore['sort'].lower()}" if found else "No cards match.",
+                       size=12, color=theme.MUTED)
         more = theme.button(f"Load {scryfall.SEARCH_PAGE} more", lambda e: self.load_explore())
         more.visible = self.explore["more"] and bool(found)
         return ft.Column([ft.Row([search]), filters, note, self._card_grid(found, s), more],
@@ -895,7 +893,7 @@ class DecksPage:
 
     def load_explore(self, show=True):
         page = self.explore["page"] + 1
-        order, direction, _ = popularity_order(self.explore["format"])
+        order, direction = EXPLORE_SORTS[self.explore["sort"]]
         result = self.busy("Searching Scryfall", lambda: scryfall.search(self.explore["for"], page, order, direction))
         if result:
             rows, more, total = result
@@ -1025,7 +1023,7 @@ class DecksPage:
         identity = synergy.identity_of(commanders)
         if rec["list"] != self.list_id:
             # The commander's own suggestions, as on the desktop: creature types it names count
-            # as tribes (known types: the ones in its colors' most played cards)
+            # as tribes (known types: the ones on its colors' cheapest cards)
             common = self.busy("Loading cards", lambda: self._search(self._scope(s), GENERAL_PAGES)) or []
             offered = synergy.suggest_themes(commanders, synergy.known_types(r["type_line"] for r in common))
             rec.update(list=self.list_id, offered=offered[:THEMES_OFFERED], themes=offered[:2], shown={})

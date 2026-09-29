@@ -97,6 +97,23 @@ def test_card_database_from_bulk_data():
     assert (foil_only["price"], foil_only["foil"]) == (1.25, 1)
 
 
+def test_old_databases_lose_edhrec_ranks_and_popularity_tag_lists(temp_db):
+    import sqlite3
+    with sqlite3.connect(temp_db.DB_NAME) as conn:
+        conn.execute("ALTER TABLE oracle_cards ADD COLUMN edhrec_rank INTEGER")  # as saved before
+        conn.execute("INSERT INTO oracle_cards (name, edhrec_rank) VALUES ('Sol Ring', 1)")
+        conn.execute("INSERT INTO card_tags (tag, identity, fetched, names) VALUES "
+                     "('ramp', 'G', '2026-09-01T00:00:00+00:00', '[\"Sol Ring\"]')")
+    temp_db.create_table()
+    with sqlite3.connect(temp_db.DB_NAME) as conn:
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(oracle_cards)")}
+        assert "edhrec_rank" not in columns
+        assert conn.execute("SELECT name FROM oracle_cards").fetchall() == [("Sol Ring",)]
+    assert temp_db.tagged_names("ramp", "G") is None  # only its most played cards: fetched again
+    temp_db.save_tagged_names("ramp", "G", {"Sol Ring", "Cultivate"})
+    assert temp_db.tagged_names("ramp", "G") == {"Sol Ring", "Cultivate"}
+
+
 def test_printings_grouped_with_finishes_and_owned(temp_db):
     from card_browser import group_printings
     temp_db.watch_cards([

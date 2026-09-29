@@ -6,8 +6,8 @@ The deck builder: decks, binders and wishlists in three panels.
   and the deck as a whole are checked against it (see formats.py). Commander decks
   also get their Commander bracket, and can aim for one (see brackets.py).
 - Right: cards to add -- My Cards (your collection) or Explore (every card, from the
-  card database), with search and filters, or Recommended: an EDHREC-style page of
-  cards for a Commander deck's commander (see recommendations.py).
+  card database), with search and filters, or Recommended: a page of cards for a
+  Commander deck's commander, worked out from the cards themselves (see recommendations.py).
 
 Any printing you own counts toward a list's cards.
 """
@@ -908,7 +908,7 @@ class ListsWindow(QWidget):
         self.db_button.hide()
         self.db_notice.setText("Downloading the card database…")
         self.db_notice.setVisible(not quiet)
-        # A database from before popularity ranks were kept downloads again even if unchanged
+        # A database missing newer columns (see db.card_database_outdated) downloads again even if unchanged
         fresh = db.has_card_database() and not db.card_database_outdated()
         last_bulk = self.settings.value("finance_bulk_updated") if fresh else None
         track_new = self.settings.value("finance_mode") == finance.POPULATED

@@ -220,7 +220,6 @@ def oracle_record(data):
         "image_url": image_url_for(Card(data)),
         "foil": code,
         "price": float(price) if price else None,
-        "edhrec_rank": data.get("edhrec_rank"),
         "oracle_id": data.get("oracle_id") or (faces[0].get("oracle_id") if faces else None),
         # Printed stats of the card (its front face), for the rules calculators
         "power": data.get("power") or front.get("power"),
@@ -249,10 +248,10 @@ def fetch_card_data(names):
 SEARCH_PAGE = 175  # cards per page of a Scryfall search
 
 
-def search(query, page=1, order="edhrec", direction="auto"):
+def search(query, page=1, order="name", direction="auto"):
     """(card database rows, whether there's another page, total matches) for one page of a
     Scryfall search in its own syntax ("t:creature id<=UB legal:modern"), sorted by order
-    (Scryfall's: "edhrec", "tix", "penny", "name"…) and direction ("auto", "asc", "desc").
+    (Scryfall's: "name", "cmc", "usd"…; never its play counts) and direction ("auto", "asc", "desc").
     The website's deck builder browses with this instead of the downloaded card database."""
     _require_online()
     if "prefer:" not in query:
@@ -335,14 +334,19 @@ def get_set_codes():
     return {s["name"].lower(): s["code"] for s in data["data"]} if data else {}
 
 
-def tagged_cards(tag, identity, pages=2):
-    # Names of the most-played Commander cards with a Scryfall community tag (Tagger's
-    # "otag", e.g. "sacrifice-outlet") within a color identity like "WUB", most played first
+# At most 7,000 cards per tag: the broadest in five colors (removal, about 6,200 in 2026) fit.
+# Only the first fetch per tag and colors is slow (a page a request); it's saved for 30 days
+TAG_PAGES = 40
+
+
+def tagged_cards(tag, identity, pages=TAG_PAGES):
+    # Names of every Commander card with a Scryfall community tag (Tagger's "otag", e.g.
+    # "sacrifice-outlet") within a color identity like "WUB": all of them, not the most played
     _require_online()
     names = []
     query = f"otag:{tag} id<={identity or 'c'} legal:commander"
     for page in range(1, pages + 1):
-        data = _get_json("/cards/search", {"q": query, "order": "edhrec", "page": page})
+        data = _get_json("/cards/search", {"q": query, "order": "name", "page": page})
         if data is None:  # no cards with that tag in these colors
             break
         names += [card["name"] for card in data["data"]]

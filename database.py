@@ -156,7 +156,6 @@ def create_table():
                 image_url TEXT,
                 foil INTEGER,
                 price REAL,
-                edhrec_rank INTEGER,
                 oracle_id TEXT,
                 power TEXT,
                 toughness TEXT,
@@ -165,9 +164,10 @@ def create_table():
             )
         """)
         oracle_columns = {row["name"] for row in conn.execute("PRAGMA table_info(oracle_cards)")}
-        if "edhrec_rank" not in oracle_columns:
-            # Popularity in Commander (lower is more played); filled in by the next download
-            conn.execute("ALTER TABLE oracle_cards ADD COLUMN edhrec_rank INTEGER")
+        if "edhrec_rank" in oracle_columns:
+            # EDHREC's play counts, once kept for recommendations: the app now works from the
+            # cards themselves, so they go
+            conn.execute("ALTER TABLE oracle_cards DROP COLUMN edhrec_rank")
         if "oracle_id" not in oracle_columns:
             # Scryfall's id for the card across printings, which rulings refer to
             conn.execute("ALTER TABLE oracle_cards ADD COLUMN oracle_id TEXT")
@@ -189,7 +189,7 @@ def create_table():
         """)
         conn.execute("CREATE INDEX IF NOT EXISTS card_rulings_card ON card_rulings (oracle_id)")
         # Scryfall's community tags ("ramp", "sacrifice-outlet"…) for the recommendations,
-        # the most popular cards per tag and color identity, refreshed now and then
+        # every card per tag and color identity, refreshed now and then
         conn.execute("""
             CREATE TABLE IF NOT EXISTS card_tags (
                 tag TEXT NOT NULL,
@@ -862,7 +862,7 @@ def owned_by_name():
 
 _ORACLE_COLUMNS = ["name", "type_line", "mana_cost", "cmc", "colors", "color_identity", "oracle_text",
                    "legalities", "scryfall_id", "set_code", "set_name", "collector_number", "rarity",
-                   "image_url", "foil", "price", "edhrec_rank", "oracle_id", "power", "toughness", "loyalty", "game_changer"]
+                   "image_url", "foil", "price", "oracle_id", "power", "toughness", "loyalty", "game_changer"]
 
 
 def replace_oracle_cards(records):
@@ -882,7 +882,7 @@ def _add_oracle_cards(conn, records):
     conn.executemany(
         f"INSERT OR REPLACE INTO oracle_cards ({', '.join(_ORACLE_COLUMNS)}) "
         f"VALUES ({', '.join(':' + c for c in _ORACLE_COLUMNS)})",
-        [{"edhrec_rank": None, "oracle_id": None, "power": None, "toughness": None, "loyalty": None, "game_changer": 0, **r}
+        [{"oracle_id": None, "power": None, "toughness": None, "loyalty": None, "game_changer": 0, **r}
          for r in records])
 
 
@@ -945,11 +945,11 @@ def has_card_database():
 
 
 def card_database_outdated():
-    # Downloaded before popularity ranks, card ids (for rulings), power and toughness or
-    # Game Changers were kept, so it needs downloading again
+    # Downloaded before card ids (for rulings), power and toughness or Game Changers were
+    # kept, so it needs downloading again
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards) AND NOT EXISTS "
-                            "(SELECT 1 FROM oracle_cards WHERE edhrec_rank IS NOT NULL AND oracle_id IS NOT NULL"
+                            "(SELECT 1 FROM oracle_cards WHERE oracle_id IS NOT NULL"
                             " AND power IS NOT NULL AND game_changer IS NOT NULL)").fetchone()[0] == 1
 
 
@@ -960,12 +960,17 @@ def creature_type_lines():
             "SELECT DISTINCT type_line FROM oracle_cards WHERE type_line LIKE '%Creature%—%'")]
 
 
+# Tag lists saved before this held only each tag's most played cards (EDHREC's order)
+_WHOLE_TAGS_SINCE = datetime(2026, 9, 29, tzinfo=timezone.utc)
+
+
 def tagged_names(tag, identity, max_age=timedelta(days=30)):
     # Names saved for a Scryfall tag and color identity, or None if never fetched or too old
     with _connect() as conn:
         row = conn.execute("SELECT fetched, names FROM card_tags WHERE tag = ? AND identity = ?",
                            (tag, identity)).fetchone()
-    if row is None or datetime.fromisoformat(row["fetched"]) + max_age < datetime.now(timezone.utc):
+    fetched = datetime.fromisoformat(row["fetched"]) if row else None
+    if fetched is None or fetched < _WHOLE_TAGS_SINCE or fetched + max_age < datetime.now(timezone.utc):
         return None
     return set(json.loads(row["names"]))
 
@@ -1024,7 +1029,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT c.name, c.scryfall_id, c.foil, c.set_code, c.set_name, c.collector_number, c.image_url,
                    MAX(c.price) AS price, SUM(c.quantity) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank, o.game_changer
+                   o.color_identity, o.oracle_text, o.legalities, o.game_changer
             FROM collection c LEFT JOIN oracle_cards o ON o.name = c.name
             GROUP BY c.scryfall_id, c.foil, c.name
         """
@@ -1032,7 +1037,7 @@ def search_cards(owned_only, text="", card_type="", colors="", format_key=None, 
         base = """
             SELECT o.name, o.scryfall_id, o.foil, o.set_code, o.set_name, o.collector_number, o.image_url,
                    o.price, COALESCE(own.copies, 0) AS owned, o.type_line, o.mana_cost, o.cmc, o.colors,
-                   o.color_identity, o.oracle_text, o.legalities, o.edhrec_rank, o.game_changer
+                   o.color_identity, o.oracle_text, o.legalities, o.game_changer
             FROM oracle_cards o LEFT JOIN (
                 SELECT name, SUM(quantity) AS copies FROM collection GROUP BY name COLLATE NOCASE
             ) own ON own.name = o.name
