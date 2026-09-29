@@ -57,3 +57,23 @@ def test_recommend_played_with_and_top_cards():
     assert "Karn Liberated" not in names                 # never played alongside
     assert "Lightning Bolt" not in names                 # already in the deck
     assert top[0][0] in {"Goblin Guide", "Lava Spike"} and top[0][2] == "In 50% of Modern decks"
+
+
+def test_fetch_gives_up_when_events_keep_failing(monkeypatch):
+    listing = "".join(f'<a href="/decklist/modern-league-2026-09-2{n}10983">x</a>' for n in range(8))
+    calls = []
+
+    def fake_get(path):
+        calls.append(path)
+        if path.startswith("/decklists/"):
+            return listing
+        raise meta.requests.ConnectionError("no answer")
+
+    monkeypatch.setattr(meta, "_get", fake_get)
+    try:
+        meta.fetch(days=30, today=date(2026, 9, 30), progress=None)
+    except RuntimeError as error:
+        assert "stopped answering" in str(error)
+    else:
+        raise AssertionError("fetch kept going")
+    assert len([c for c in calls if c.startswith("/decklist/")]) == meta.GIVE_UP

@@ -36,6 +36,7 @@ PARTNERS = 40    # cards kept per card as "played with"
 DELAY = 1.5
 TIMEOUT = 20
 TRIES = 3
+GIVE_UP = 5      # events failing in a row before the whole run stops
 _EVENT = re.compile(r'href="/decklist/([a-z0-9-]+?-(\d{4}-\d{2}-\d{2})\d+)"')
 _DATA = re.compile(r"window\.MTGO\.decklists\.data\s*=\s*(\{.*?\});\s*\n", re.S)
 
@@ -96,14 +97,21 @@ def fetch(days=DAYS, today=None, progress=print):
         listed += events(_get(f"/decklists/{year}/{month:02d}"))
     listed = [e for e in dict.fromkeys(listed) if e[2] >= since]
     found = defaultdict(list)
+    failed = 0  # in a row
     for number, (slug, format_key, _) in enumerate(listed, start=1):
         if progress and number % 25 == 0:
             progress(f"{number} of {len(listed)} events")
         try:
             found[format_key] += decks(_get(f"/decklist/{slug}"))
+            failed = 0
         except requests.RequestException as error:
             if progress:
                 progress(f"Skipped {slug}: {error}")
+            failed += 1
+            # A few in a row means mtgo.com has stopped answering us, and each costs minutes of
+            # retries, so give up instead of running for hours
+            if failed == GIVE_UP:
+                raise RuntimeError(f"mtgo.com stopped answering ({GIVE_UP} events in a row failed)") from error
     return found
 
 

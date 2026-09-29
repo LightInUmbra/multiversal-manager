@@ -26,7 +26,7 @@ jobs:
       - name: Read the decklists
         run: |
           pip install requests
-          python meta.py build out
+          python -u meta.py build out   # -u: progress shows as it happens, not at the end
 
       - name: Publish to the meta-data branch
         working-directory: out
