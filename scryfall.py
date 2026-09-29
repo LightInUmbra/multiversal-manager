@@ -243,6 +243,22 @@ def fetch_card_data(names):
     return [r for r in (oracle_record(card.data) for card in get_collection(identifiers)) if r]
 
 
+SEARCH_PAGE = 175  # cards per page of a Scryfall search
+
+
+def search(query, page=1, order="edhrec", direction="auto"):
+    """(card database rows, whether there's another page, total matches) for one page of a
+    Scryfall search in its own syntax ("t:creature id<=UB legal:modern"), sorted by order
+    (Scryfall's: "edhrec", "tix", "penny", "name"…) and direction ("auto", "asc", "desc").
+    The website's deck builder browses with this instead of the downloaded card database."""
+    _require_online()
+    data = _get_json("/cards/search", {"q": query, "order": order, "dir": direction, "page": page})
+    if data is None:  # nothing matches
+        return [], False, 0
+    rows = [r for r in (oracle_record(card) for card in data["data"]) if r]
+    return rows, bool(data.get("has_more")), data.get("total_cards", len(rows))
+
+
 def autocomplete(partial_name):
     # Up to 20 card names matching what's been typed so far
     if offline:

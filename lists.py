@@ -33,6 +33,7 @@ import scryfall
 from card_browser import CardBrowser, PrintingDialog
 from card_image import CardImage
 from import_review_dialog import count, start_import
+from deck_stats import completion, deck_text, summary  # noqa: F401
 from importer import SECTIONS
 from recommendations import RecommendationsPanel
 
@@ -50,43 +51,6 @@ MUTED = QColor("gray")
 PRICE_MAX_AGE = timedelta(hours=24)
 CARD_DB_MAX_AGE = timedelta(days=7)  # the deck builder re-checks Scryfall's bulk data weekly
 RESULTS_SHOWN = 600
-
-
-# Pure helpers
-
-def completion(entries, owned):
-    """{entry id: copies you have} for a list's entries (in display order), given
-    owned_by_name(). Owned copies are shared out in order, so two printings of the
-    same card on one list don't both count the same copies."""
-    remaining = dict(owned)
-    have = {}
-    for entry in entries:
-        key = entry["name"].lower()
-        have[entry["id"]] = min(entry["quantity"], remaining.get(key, 0))
-        remaining[key] = remaining.get(key, 0) - have[entry["id"]]
-    return have
-
-
-def summary(entries, have):
-    # (cards, value, cards you have, cards missing, cost of the missing ones)
-    cards = sum(e["quantity"] for e in entries)
-    value = sum(e["quantity"] * (e["price"] or 0) for e in entries)
-    owned = sum(have.values())
-    cost = sum((e["quantity"] - have[e["id"]]) * (e["price"] or 0) for e in entries)
-    return cards, value, owned, cards - owned, cost
-
-
-def deck_text(entries):
-    # A plain-text deck list, grouped by section, that this app and most others can import
-    blocks = []
-    for section in SECTIONS:
-        lines = [f"{e['quantity']} {e['name']}"
-                 + (f" ({e['set_code']}) {e['collector_number']}" if e["set_code"] else "")
-                 + {0: "", 1: " *F*", 2: " *E*"}[e["foil"]]
-                 for e in entries if (e["section"] or "Main") == section]
-        if lines:
-            blocks.append("\n".join(["Deck" if section == "Main" else section] + lines))
-    return "\n\n".join(blocks) + "\n"
 
 
 def _plural(card_type, n):

@@ -16,15 +16,55 @@ def _autocomplete(text):
     return db.card_names(text) if db.has_card_database() else scryfall.autocomplete(text)
 
 
+def arrow_keys(page, pairs, fields=()):
+    """Up and Down step through the dropdown last used in a dialog, like the desktop's combo
+    boxes (a closed Flet dropdown ignores them, and never says it has focus). pairs:
+    [(dropdown, changed)], changed() running after each step; typing in one of fields stops it.
+    Returns use(dropdown), for when the dialog itself picks one (after looking a card up).
+    Each dialog's call replaces the one before."""
+    active = {"dropdown": None}
+
+    def use(dropdown):
+        active["dropdown"] = dropdown
+
+    def key(e):
+        dropdown = active["dropdown"]
+        if dropdown is None or e.key not in ("Arrow Down", "Arrow Up") or not dropdown.options:
+            return
+        keys = [o.key for o in dropdown.options]
+        index = keys.index(dropdown.value) if dropdown.value in keys else -1
+        index = max(0, min(len(keys) - 1, index + (1 if e.key == "Arrow Down" else -1)))
+        if keys[index] != dropdown.value:
+            dropdown.value = keys[index]
+            next(changed for d, changed in pairs if d is dropdown)()
+
+    for dropdown, changed in pairs:
+        chosen = dropdown.on_select
+
+        def selected(e, dropdown=dropdown, chosen=chosen):
+            use(dropdown)
+            if chosen:
+                chosen(e)
+
+        dropdown.on_select = selected
+    for field in fields:
+        field.on_focus = lambda e: use(None)
+    page.on_keyboard_event = key
+    return use
+
+
 def _row(label, control):
     return ft.Row([ft.Text(f"{label}:", width=LABEL_WIDTH), control],
                   vertical_alignment=ft.CrossAxisAlignment.CENTER)
 
 
-def open_card_form(page, on_save, existing=None):
+def open_card_form(page, on_save, existing=None, name=None):
     """Add a card, or edit a collection entry (its database row as existing). on_save gets
-    the keyword arguments for database.add_card / update_card."""
+    the keyword arguments for database.add_card / update_card. name: a card to look up
+    straight away (adding a card seen in the deck builder)."""
+    card_name = name
     printings = []
+    arrows = {"use": lambda dropdown: None}  # set once the fields exist (see arrow_keys)
     name = ft.TextField(hint_text="Start typing a card name…", dense=True, expand=True, autofocus=True)
     suggestions = ft.Column(spacing=0, tight=True)
     suggestion_box = ft.Container(suggestions, visible=False, border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
@@ -97,6 +137,7 @@ def open_card_form(page, on_save, existing=None):
         status.value = f"{len(found)} printing{'s' if len(found) != 1 else ''} found. Pick the one you own."
         save.disabled = False
         printing_changed(foil=foil, price_each=price_each)
+        arrows["use"](printing)  # Up / Down now browse the printings, like the desktop
 
     def selected():
         return printings[int(printing.value)]
@@ -136,6 +177,8 @@ def open_card_form(page, on_save, existing=None):
     printing.on_select = printing_changed
     finish.on_select = finish_changed
     save.on_click = saved
+    arrows["use"] = arrow_keys(page, [(printing, printing_changed), (finish, lambda: finish_changed(None))],
+                               fields=[name, price, quantity, notes])
     show_image()
 
     form = ft.Column([
@@ -157,3 +200,5 @@ def open_card_form(page, on_save, existing=None):
         notes.value = existing["notes"] or ""
         # Reselect the entry's printing, finish and price once its printings load
         look_up(existing["name"], select_id=existing["scryfall_id"], foil=existing["foil"], price_each=existing["price"])
+    elif card_name:
+        look_up(card_name)

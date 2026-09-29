@@ -131,3 +131,27 @@ def test_theme_detection_edge_cases_from_the_150_commander_benchmark():
                   "from the top of your library until you exile a nonland card that costs less.)")[0] == "cascade"
     # Non-creature subtypes on odd creatures aren't tribes
     assert synergy.creature_types({"type_line": "Enchantment Creature — Saga Wizard"}) == ["Wizard"]
+
+
+def test_decks_without_a_commander_get_cards_like_their_own():
+    deck = [dict(_card("Lightning Bolt", "Instant", "Lightning Bolt deals 3 damage to any target."), quantity=4),
+            dict(_card("Rift Bolt", "Sorcery", "Rift Bolt deals 3 damage to any target. Suspend 1—{R}"), quantity=4)]
+    pool = [_card("Chain Lightning", "Sorcery", "Chain Lightning deals 3 damage to any target. Then that player "
+                                                "may pay {R}{R}.", rank=21),
+            _card("Lava Dart", "Instant", "Lava Dart deals 1 damage to any target. Flashback—Sacrifice a Mountain.", rank=41),
+            _card("Emrakul, the Aeons Torn", "Legendary Creature — Eldrazi", "This spell can't be countered. "
+                                                                             "Flying, protection from spells", rank=1),
+            _card("Sacred Foundry", "Land — Mountain Plains", "({T}: Add {R} or {W}.)", rank=61),
+            _card("Lightning Bolt", "Instant", "Lightning Bolt deals 3 damage to any target.", rank=81)]
+    pool += [_card(f"Filler {i}", "Creature — Human", f"Filler {i} gets +{i}/+0 as long as it's your turn.", rank=100 + i)
+             for i in range(40)]
+    for card in pool:
+        card["phrases"] = synergy.phrases(card["oracle_text"], card["name"])
+    sections = dict((title, rows) for title, rows, _ in
+                    synergy.recommend_similar(deck, pool, in_deck=["Lightning Bolt", "Rift Bolt"]))
+    like = [r["name"] for r in sections[synergy.SIMILAR_TITLE]]
+    assert like[0] == "Chain Lightning"            # the same words as the deck's burn
+    assert "Lava Dart" in like
+    assert "Emrakul, the Aeons Torn" not in like   # popular, but nothing like the deck
+    assert "Lightning Bolt" not in like            # already in the deck
+    assert [r["name"] for r in sections["Lands"]] == ["Sacred Foundry"]

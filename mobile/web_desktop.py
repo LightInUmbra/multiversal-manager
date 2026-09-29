@@ -65,12 +65,13 @@ def header(active, on_tab, on_sync, email, menu_items):
     return ft.Column([theme.stripe(), bar], spacing=0)
 
 
-def _tile(title, value, note, value_color=None, note_color=None, small=False):
+def tile(title, value, note, value_color=None, note_color=None, small=False):
     return ft.Container(
         ft.Column([ft.Text(title, color=theme.MUTED, size=13),
                    ft.Text(value, size=17 if small else 22, weight=ft.FontWeight.BOLD, color=value_color,
                            no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS),
-                   ft.Text(note, size=12, color=note_color or theme.MUTED)], spacing=2, tight=True),
+                   ft.Text(note, size=12, color=note_color or theme.MUTED, no_wrap=True,
+                           overflow=ft.TextOverflow.ELLIPSIS, tooltip=note or None)], spacing=2, tight=True),
         bgcolor=theme.COLORS["surface"], border=ft.Border.all(1, theme.LINE), border_radius=10,
         padding=ft.Padding.symmetric(horizontal=16, vertical=12), expand=True)
 
@@ -131,14 +132,14 @@ class CardsPage:
         gains = [(c, r) for r in rows if (c := changes.get(r["id"])) and c.each > 0.004]
         best = max(gains, key=lambda g: g[0].percent or 0, default=None)
         self.tiles.controls = [
-            _tile("Collection value", f"${value:,.2f}",
+            tile("Collection value", f"${value:,.2f}",
                   f"{price_changes.format_change(*overall)} this week" if overall else "No price history yet",
                   value_color=theme.GOLD,
                   note_color=(theme.GAIN if overall[0] > 0 else theme.LOSS) if overall and abs(overall[0]) > 0.004 else None),
-            _tile("Cards", str(cards), f"{unique} unique printing{'s' if unique != 1 else ''}"),
-            _tile("Most valuable", priciest["name"] if priciest else "—", _money(priciest["price"]) if priciest else "",
+            tile("Cards", str(cards), f"{unique} unique printing{'s' if unique != 1 else ''}"),
+            tile("Most valuable", priciest["name"] if priciest else "—", _money(priciest["price"]) if priciest else "",
                   small=True),
-            _tile(f"Biggest gain ({CHANGE_DAYS}d)", best[1]["name"] if best else "—",
+            tile(f"Biggest gain ({CHANGE_DAYS}d)", best[1]["name"] if best else "—",
                   price_changes.format_change(best[0].each, best[0].percent) if best else "No gains yet",
                   note_color=theme.GAIN if best else None, small=True),
         ]

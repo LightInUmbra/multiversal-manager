@@ -25,6 +25,7 @@ import scan  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
 import theme  # noqa: E402
+import web_decks  # noqa: E402
 import web_desktop  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
@@ -50,6 +51,8 @@ def _options(mapping):
 def main(page: ft.Page):
     page.title = APP_NAME
     theme.apply(page)
+    if page.web:  # right-click opens the app's own menus (the deck builder's), not the browser's
+        page.run_task(ft.BrowserContextMenu().disable)
     db.create_table()
 
     # The sign-in lives in the phone's own database, next to the sync cursors
@@ -314,7 +317,7 @@ def main(page: ft.Page):
             pushed, applied = result
             if applied:
                 show_cards()
-                deck_builder.refresh()
+                (decks_page if desktop_layout() else deck_builder).refresh()
             if not quiet or applied:
                 toast(f"Synced: sent {pushed}, received {applied}.")
 
@@ -484,6 +487,7 @@ def main(page: ft.Page):
             card_form.open_card_form(page, saved, existing=row)
 
     cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices)
+    decks_page = web_decks.DecksPage(page, toast, busy)
 
     rules_view = rules_tab.Rules(page, toast, busy)
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
@@ -508,13 +512,16 @@ def main(page: ft.Page):
         if scanner.active:
             scanner.close()
         index = page.navigation_bar.selected_index
-        body.content = tabs[index - 1].view if index else collection_view()
-        if index and desktop_layout():  # the page's margins under the website's header
+        # The desktop layout has its own pages where they're built (Cards, Decks), else the phone's
+        pages = [collection_view()] + ([decks_page] if desktop_layout() else [deck_builder]) + [rules_view]
+        current = pages[index]
+        body.content = current if index == 0 else current.view
+        if index == 2 and desktop_layout():  # the page's margins under the website's header
             body.content = ft.Container(body.content, padding=ft.Padding.symmetric(horizontal=web_desktop.PAGE_PADDING, vertical=16))
-        # Nothing to add on Rules, and the desktop layout's Cards tab has its own Add Card button
-        page.floating_action_button.visible = index == 1 or (index == 0 and not desktop_layout())
+        # The phone's + button, on Collection and Decks; the desktop layout has buttons instead
+        page.floating_action_button.visible = not desktop_layout() and index != 2
         show_header()
-        tabs[index - 1].refresh() if index else show_cards()
+        current.refresh() if index else show_cards()
 
     page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
         ft.NavigationBarDestination(icon=ft.Icons.STYLE_OUTLINED, label="Collection"),
