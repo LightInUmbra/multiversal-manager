@@ -1097,7 +1097,7 @@ class DecksPage:
                    _dropdown(rec["price"], [(k, k) for k in PRICES], lambda e: self._rec(price=e.control.value), 130),
                    theme.button("Available combos", lambda e: self.show_combos(s, commanders, identity))]
         controls = [ft.Text(f"Build around (color identity {identity or 'colorless'}):", size=12, color=theme.MUTED),
-                    self._theme_picker(commanders), ft.Row(filters, spacing=4)]
+                    self._theme_picker(commanders), ft.Row(filters, spacing=4, wrap=True, run_spacing=4)]  # wraps on a phone
         if s["info"]["bracket"]:
             controls.append(ft.Text(f"Aiming for {brackets.label(s['info']['bracket'])}: cards that don't fit are left out.",
                                     size=11.5, color=theme.MUTED))

@@ -99,7 +99,7 @@ The bigger idea is a set of connected apps that all share the same collection:
 | Platform | Status |
 |---|---|
 | **Desktop** | Available! |
-| **Android** | Available; collection and prices, Deck Builder, the rules judge, and a camera card scanner |
+| **Android** | Available; collection and prices, Deck Builder (with Stats, and Recommended and Available Combos for Commander decks), the rules judge, and a camera card scanner |
 | **Web** | [multiversalmanager.app](https://multiversalmanager.app), updated with every release; the desktop's layout in your browser (collection, Deck Builder with Commander recommendations, rules), signed in to the same account |
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.

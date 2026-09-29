@@ -3,7 +3,10 @@
 import flet as ft
 
 TITLE_FONT = "Cinzel"
-FONTS = {TITLE_FONT: "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf"}
+TEXT_FONT = "Roboto"
+# Shipped with the app (build_apk.stage downloads them), since a browser that blocks Google's
+# font servers would otherwise draw no text at all
+FONTS = {TITLE_FONT: "fonts/Cinzel.ttf", TEXT_FONT: "fonts/Roboto.ttf"}
 
 GOLD = "#E0B84F"
 BACKGROUND = "#100E1F"
@@ -19,6 +22,7 @@ COLORS = dict(primary=GOLD, on_primary="#1A1300", primary_container="#4A3B8C",
 def apply(page):
     title = ft.TextStyle(font_family=TITLE_FONT, weight=ft.FontWeight.W_600, color=COLORS["on_surface"])
     theme = ft.Theme(
+        font_family=TEXT_FONT,
         color_scheme=ft.ColorScheme(**COLORS),
         scaffold_bgcolor=BACKGROUND,
         text_theme=ft.TextTheme(title_large=title, headline_small=title),

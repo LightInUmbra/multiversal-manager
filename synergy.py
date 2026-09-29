@@ -471,7 +471,9 @@ def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, st
     # Then what works with the deck as it stands
     ties = deck_ties(commanders, deck)
     for row in pool:
-        if row["name"] not in engine.roles:  # newer than the data: paired up by its own text
+        # A card newer than the data pairs up by its own text; one without roles (most cards the
+        # data leaves out) has nothing to pair up by, so it isn't checked card by card
+        if row["name"] not in engine.roles and any(interactions.roles_of(row)):
             ties[row["name"]] += sum(COMMANDER_WEIGHT * w for c in commanders for w, _ in engine.reasons(row, c))
             ties[row["name"]] += sum(w for name in deck for w, _ in engine.reasons(row, name))
     add(WORKS_TITLE, [r for r in pool if ties[r["name"]]], lambda r: (ties[r["name"]], *fit(r)), WORKS_SHOWN, why)

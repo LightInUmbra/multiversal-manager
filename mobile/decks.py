@@ -47,12 +47,69 @@ def _number(field):
         return None
 
 
+class PhoneRecommendations(web_decks.DecksPage):
+    """The website's Recommended tab on the phone: its card pool, themes, sections and
+    Available Combos, all the website's code, with its three panels swapped for the phone's
+    one column. Tapping a card opens it in a dialog with an Add button."""
+
+    def __init__(self, page, toast, busy):
+        super().__init__(page, toast, busy)
+        self.tab, self.badges = web_decks.RECOMMENDED, {}
+        self.column = ft.Column(spacing=10)
+
+    def show_for(self, list_id):
+        self.list_id = list_id
+        self._state()
+        self.refill_tab()
+
+    def refill_tab(self, update=True):
+        # The sections, into the phone's column (a theme, filter or Show More works them out again)
+        self.badges = {}
+        built = self._recommended(self.s)
+        self.column.controls = built.controls if isinstance(built, ft.Column) else [built]
+        if update:
+            self.page.update()
+
+    def changed(self):
+        # After adding a card: its +/✓ marks, leaving the sections where they are
+        self.spellbook.pop(self.list_id, None)
+        in_list = {e["name"] for e in self._state()["entries"]}
+        for name, marks in self.badges.items():
+            for mark in marks:
+                mark.value = "✓" if name in in_list else "+"
+        self.page.update()
+
+    def _card_menu(self, card, s):
+        return []  # no right-click on a phone: the card's dialog has Add
+
+    def select(self, selected):
+        kind, card = selected
+        if kind != "card":
+            return
+
+        def add(e):
+            self.page.pop_dialog()
+            self.add(card)
+
+        self.page.show_dialog(ft.AlertDialog(
+            content=ft.Column([
+                *([ft.Image(src=card["image_url"], width=260, border_radius=10)] if card["image_url"] else []),
+                ft.Text(card["name"], size=17, weight=ft.FontWeight.BOLD),
+                ft.Text(card["type_line"] or "", size=13, color=MUTED),
+                ft.Text(card["oracle_text"] or "", size=13.5),
+                *([ft.Text(card["note"], size=13, color=ft.Colors.PRIMARY)] if card.get("note") else []),
+                *web_decks.works_well_with(card)], tight=True, spacing=8, scroll=ft.ScrollMode.AUTO),
+            actions=[ft.TextButton("Close", on_click=lambda e: self.page.pop_dialog()),
+                     ft.FilledButton(f"Add to {SECTION_TITLES[self.add_to]}", on_click=add)]))
+
+
 class Decks:
     def __init__(self, page, toast, busy, card_dialog):
         self.page, self.toast, self.busy, self.card_dialog = page, toast, busy, card_dialog
         self.list_id = None  # the open list, or None for the list of lists
         self.spellbook = {}  # list id -> Commander Spellbook's reading, until the list changes
-        self.stats = False   # showing a list's stats instead of its cards
+        self.mode = "cards"  # what a list shows: its "cards", "stats" or "recommended" cards
+        self.recommendations = None  # PhoneRecommendations, made the first time they're shown
         self.view = ft.Column(expand=True)
 
     def refresh(self):
@@ -80,8 +137,9 @@ class Decks:
         self.spellbook.pop(self.list_id, None)
         self.show_list()
 
-    def toggle_stats(self):
-        self.stats = not self.stats
+    def toggle(self, mode):
+        # Stats or Recommended instead of the cards, and back
+        self.mode = "cards" if self.mode == mode else mode
         self.show_list()
 
     # Every list
@@ -146,21 +204,39 @@ class Decks:
         value = sum(e["quantity"] * (e["price"] or 0) for e in entries)
         facts = [_plural(cards, "card"), _money(value), *([formats.label(info["format"])] if is_deck else [])]
         types = formats.type_counts(entries) if is_deck else {}
+        commander = is_deck and formats.FORMATS.get(info["format"], formats.FORMATS["casual"]).commander
+        if self.mode == "recommended" and not commander:
+            self.mode = "cards"  # recommendations are for Commander decks, as everywhere
+
+        def switch(mode, icon, tooltip):
+            # A header button that shows the list's stats or recommendations, and back to its cards
+            on = self.mode == mode
+            return ft.IconButton(ft.Icons.LIST if on else icon, tooltip="Cards" if on else tooltip,
+                                 on_click=lambda e: self.toggle(mode))
+
         controls = [ft.Row([
             ft.IconButton(ft.Icons.ARROW_BACK, tooltip="All lists", on_click=back),
             ft.Column([ft.Text(info["name"], size=20, weight=ft.FontWeight.BOLD),
                        ft.Text(" · ".join(facts), color=MUTED),
                        *([ft.Text(" · ".join(f"{n} {t}" for t, n in types.items()), size=13, color=MUTED)]
                          if types else [])], spacing=2, expand=True),
-            ft.IconButton(ft.Icons.LIST if self.stats else ft.Icons.BAR_CHART, tooltip="Cards" if self.stats else "Stats",
-                          on_click=lambda e: self.toggle_stats()),
+            *([switch("recommended", ft.Icons.AUTO_AWESOME, "Recommended")] if commander else []),
+            switch("stats", ft.Icons.BAR_CHART, "Stats"),
             ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
                           on_click=lambda e: self.edit_list(info))], vertical_alignment=ft.CrossAxisAlignment.START)]
+        if self.mode == "recommended":
+            # The website's Recommended tab (its themes, sections and Available Combos), phone-sized
+            if self.recommendations is None:
+                self.recommendations = PhoneRecommendations(self.page, self.toast, self.busy)
+            self.view.controls = [ft.ListView([*controls, self.recommendations.column], expand=True, spacing=8,
+                                              padding=ft.Padding.symmetric(horizontal=4))]
+            self.recommendations.show_for(self.list_id)
+            return
         if problems:
             controls.append(_box([_warning(p) for p in problems]))
-        if is_deck and formats.FORMATS.get(info["format"], formats.FORMATS["casual"]).commander:
+        if commander:
             controls.append(self.bracket_panel(info, entries))
-        if self.stats:
+        if self.mode == "stats":
             # The website's Stats tab, on the phone: curve, colors, types, most valuable
             st = deck_stats.stats(entries, is_deck)
             controls += web_decks.stats_controls(st) if st else [ft.Text("Add cards to see their stats.", color=MUTED)]

@@ -22,6 +22,7 @@ import os
 import shutil
 import subprocess
 import sys
+import urllib.request
 from pathlib import Path
 
 # Constants
@@ -35,6 +36,9 @@ SHARED = ["database.py", "sync.py", "scryfall.py", "copy_details.py", "formats.p
 MAGIC_PROJECTS = REPO / "external" / "Magic-Projects"
 SIGNING = MOBILE / "signing"
 KEY_ALIAS = "multiversal-manager"
+# theme.FONTS, from Google Fonts' repository
+FONTS = {"Cinzel.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
+         "Roboto.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/roboto/Roboto%5Bwdth,wght%5D.ttf"}
 
 
 def stage():
@@ -55,6 +59,9 @@ def stage():
         shutil.copytree(MAGIC_PROJECTS / package, STAGE / "external" / "Magic-Projects" / package,
                         ignore=shutil.ignore_patterns("__pycache__"))
     draw_icon(STAGE / "assets" / "icon.png")
+    (STAGE / "assets" / "fonts").mkdir()
+    for name, url in FONTS.items():
+        urllib.request.urlretrieve(url, STAGE / "assets" / "fonts" / name)
 
 
 def draw_icon(path, size=1024):
