@@ -1,13 +1,14 @@
 """
-Commander recommendations, in the spirit of EDHREC: pick a commander and a direction
+Commander recommendations: pick a commander and a direction
 (themes like tokens or +1/+1 counters) and get the cards that fit it best, grouped
 the way a deck is built.
 
-It's all worked out from the local card database: each card's types and rules text
-are matched against the chosen themes, boosted by Scryfall's community tags when
-they've been fetched, with the cards played most in Commander (Scryfall's
-edhrec_rank) winning ties. No decklists are involved, so "synergy" here means how
-well a card fits the chosen themes, not how often people play it with this commander.
+It's all worked out from the cards themselves: each card's types and rules text are
+matched against the chosen themes and the commander's own wording, boosted by Scryfall's
+community tags when they've been fetched and, more lightly, by the card's official
+rulings when they've been downloaded. Ties go to the more efficient card (cheaper, or a
+land making more of the commander's colors). No play counts or decklists are involved,
+so "synergy" means how well a card fits, not how often people play it.
 """
 
 # Imports
@@ -125,7 +126,7 @@ THEMES = {
                      r"top (?:card )?of your library|look at the top card of your library any time"),
 }
 
-# Staples every Commander deck wants, whatever its theme, ranked by popularity:
+# Staples every Commander deck wants, whatever its theme, ranked by fit, then efficiency:
 # title -> (rules text regex, Scryfall tags, card types left out)
 STAPLES = {
     "Ramp": (r"add \{[wubrgc]\}|add (?:one|two|three) mana|mana of any (?:one )?colou?r|search your library for "
@@ -139,7 +140,7 @@ STAPLES = {
                     r"all creatures get -|deals? (?:\d+|x) damage to each creature", ("board-wipe",), ("Land",)),
 }
 
-# Card type sections, in the order EDHREC lists them
+# Card type sections, in the order a decklist groups them
 TYPE_SECTIONS = [("Creature", "Creatures"), ("Instant", "Instants"), ("Sorcery", "Sorceries"),
                  ("Artifact", "Artifacts"), ("Enchantment", "Enchantments"), ("Planeswalker", "Planeswalkers"),
                  ("Battle", "Battles"), ("Land", "Lands")]
@@ -148,7 +149,8 @@ HIGH_SYNERGY_SHOWN, STAPLES_SHOWN, TOP_SHOWN, TYPE_SHOWN, LANDS_SHOWN = 20, 12, 
 SHOW_MORE = 30      # cards added by a section's Show More
 PRECON_POINTS = 3   # cards from the commander's own precon were designed to go with it
 ECHO_POINTS = 4     # sharing the commander's own wording, at most
-_RANK_SCALE = 20000  # popularity counts down to about this rank
+RULING_POINTS = 1   # a theme found only in a card's rulings: they clarify, so they count less than its text
+_ENTERS_TAPPED = re.compile(r"enters(?: the battlefield)? tapped(?!\s+unless)", re.IGNORECASE)
 
 
 # Themes
@@ -241,8 +243,10 @@ def load(identity, tags, commander_names=(), cards=None, fetch=False, progress=N
     can't be fetched just counts as empty."""
     if cards is None:
         rows, _ = db.search_cards(False, format_key="commander", identity=identity, limit=1_000_000)
+        rulings = db.rulings_by_name()  # empty until the Rules window has downloaded them
         cards = [{**row, "text": f"{row['type_line'] or ''}\n{row['oracle_text'] or ''}",
-                  "phrases": phrases(row["oracle_text"], row["name"])} for row in rows]
+                  "phrases": phrases(row["oracle_text"], row["name"]), "rulings": rulings.get(row["name"], "")}
+                 for row in rows]
     fetch = fetch and not scryfall.offline
     found, missing = {}, []
     for number, tag in enumerate(tags, start=1):
@@ -283,10 +287,19 @@ def load(identity, tags, commander_names=(), cards=None, fetch=False, progress=N
 
 # Scoring
 
-def _popularity(card):
-    # 1 for the most played card in Commander, falling to 0 around _RANK_SCALE
-    rank = card["edhrec_rank"]
-    return 0.0 if rank is None else max(0.0, 1 - rank / _RANK_SCALE)
+def _efficiency(card, identity):
+    """0-1 from the card itself, for ordering cards that fit equally well: a cheaper spell
+    beats a pricier one, and a land making more of the commander's colors (without
+    entering tapped) beats one making fewer. identity: the commander's colors."""
+    text = card["oracle_text"] or ""
+    if _front_type(card) != "Land":
+        return 1 - min(card.get("cmc") or 0, 10) / 10
+    if re.search(r"any colou?r|any type", text, re.IGNORECASE):
+        makes = set(identity) or {"C"}
+    else:  # its mana symbols, and the basic land types it fetches
+        makes = {c for c in "WUBRGC" if "{" + c + "}" in text} | {c for basic, c in _BASIC_TYPES.items() if basic in text}
+    fit = len(makes & set(identity)) / len(identity) if identity else float(bool(makes))
+    return fit * (0.5 if _ENTERS_TAPPED.search(text) else 1.0)
 
 
 def _front_type(card):
@@ -332,23 +345,29 @@ def _echoes(cards, commanders):
 
 def score(cards, theme_keys, tags, commanders=()):
     """The cards with how well each fits the themes and the commander's own wording
-    ("score", and "synergy" 0-100), "popularity" (0-1), "type", "staple" (a STAPLES
+    ("score", and "synergy" 0-100), "efficiency" (0-1), "type", "staple" (a STAPLES
     title, or None) and "precon" (in the commander's precon; tags["precon"] from
-    load()). The slow part of the recommendations, so it's worked out once per choice
-    of themes, not per filter."""
+    load()). A card's "rulings" (text, optional) count when its rules text doesn't
+    match a theme. The slow part of the recommendations, so it's worked out once per
+    choice of themes, not per filter."""
     matchers = [(re.compile(t.cards, re.IGNORECASE), [tags.get(tag, set()) for tag in t.tags], t.types)
                 for t in map(theme, theme_keys)]
     best = 5 * len(matchers) + ECHO_POINTS  # rules text (3) + a tag (2) for every theme, plus the commander's wording
     precon = tags.get("precon", set())
     echoes = _echoes(cards, commanders)
+    identity = identity_of(commanders)
     staples = [(title, re.compile(pattern, re.IGNORECASE), set().union(*(tags.get(t, set()) for t in staple_tags)),
                 left_out) for title, (pattern, staple_tags, left_out) in STAPLES.items()]
     pool = []
     for card in cards:
         points = 0
+        rulings = card.get("rulings") or ""
         for pattern, tag_sets, types in matchers:
             # A theme with no Scryfall tags (tribal, say) counts its rules text for both
-            points += (3 if tag_sets else 5) if pattern.search(card["text"]) else 0
+            if pattern.search(card["text"]):
+                points += 3 if tag_sets else 5
+            elif rulings and pattern.search(rulings):
+                points += RULING_POINTS
             points += 2 if any(card["name"] in names for names in tag_sets) else 0
             points += 1 if any(t in (card["type_line"] or "") for t in types) else 0
         points += PRECON_POINTS if card["name"] in precon else 0
@@ -360,7 +379,7 @@ def score(cards, theme_keys, tags, commanders=()):
         staple = (next((title for title, pattern, _ in eligible if pattern.search(card["text"])), None)
                   or next((title for title, _, names in eligible if card["name"] in names), None))
         pool.append({**card, "score": points, "synergy": min(100, round(100 * points / best)),
-                     "popularity": _popularity(card), "staple": staple, "type": kind,
+                     "efficiency": _efficiency(card, identity), "staple": staple, "type": kind,
                      "precon": card["name"] in precon})
     return pool
 
@@ -377,9 +396,9 @@ def _off_color_land(card, identity):
 
 def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, staples=True,
               precon_title="From the Precon", more=None, bracket=None, game_changers=0):
-    """[(section title, rows, how many more there are)], like an EDHREC page: the
-    commander's precon, High Synergy Cards, the staples (if staples), Top
-    Cards (the most played in these colors), then each card type. pool is from
+    """[(section title, rows, how many more there are)]: the commander's precon, High
+    Synergy Cards, the staples (if staples), Top Cards (the next best fits), then each
+    card type, each ranked by fit, then efficiency. pool is from
     score(); each row also gets a "note" (a caption line). more ({title: n}) shows n
     extra cards in a section. Each card shows up once, and the commanders, basic
     lands and in_deck names are left out, as are cards that don't fit the Commander
@@ -396,9 +415,7 @@ def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, st
 
     def note(row):
         game_changer = " · Game Changer" if row.get("game_changer") else ""
-        if row["score"]:
-            return f"{row['synergy']}% synergy{game_changer}"
-        return (f"#{row['edhrec_rank']:,} in Commander" if row["edhrec_rank"] else "Staple") + game_changer
+        return f"{row['synergy']}% synergy{game_changer}"
 
     def add(title, rows, key, limit):
         rows = sorted((r for r in rows if r["name"] not in used), key=key, reverse=True)
@@ -406,23 +423,22 @@ def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, st
         used.update(r["name"] for r in chosen)
         sections.append((title, [{**r, "note": note(r)} for r in chosen], len(rows) - len(chosen)))
 
-    def playable(row):
-        # Played a lot and fits the themes: the cards people would actually put in the deck
-        return row["popularity"] * (1 + 2 * row["synergy"] / 100)
+    def fit(row):
+        # How well it fits, then how efficient it is: nothing about how often it's played
+        return row["score"], row["efficiency"]
 
     # The precon first: it was built for this commander, and High Synergy then adds to it
-    add(precon_title, [r for r in pool if r["precon"]], lambda r: r["score"] + 2 * r["popularity"], len(pool))
-    add("High Synergy Cards", [r for r in pool if r["score"] >= 3], lambda r: (r["score"], r["popularity"]),
-        HIGH_SYNERGY_SHOWN)
+    add(precon_title, [r for r in pool if r["precon"]], fit, len(pool))
+    add("High Synergy Cards", [r for r in pool if r["score"] >= 3], fit, HIGH_SYNERGY_SHOWN)
     if staples:
         for title in STAPLES:
-            add(title, [r for r in pool if r["staple"] == title], lambda r: r["popularity"], STAPLES_SHOWN)
-    # Popular cards that fit this commander, not just the most played cards in its colors
-    add("Top Cards", [r for r in pool if r["type"] != "Land" and r["score"] >= 2], playable, TOP_SHOWN)
+            add(title, [r for r in pool if r["staple"] == title], fit, STAPLES_SHOWN)
+    # The next best fits that High Synergy didn't have room for
+    add("Top Cards", [r for r in pool if r["type"] != "Land" and r["score"] >= 2], fit, TOP_SHOWN)
     for card_type, title in TYPE_SECTIONS:
         # A card type alone ("it's an artifact") isn't enough to fit; lands all count,
-        # so the most played ones in these colors show up too
+        # so the ones making these colors best show up too
         rows = [r for r in pool if r["type"] == card_type and (r["score"] >= 2 or card_type == "Land")
                 and not _off_color_land(r, identity)]
-        add(title, rows, playable, LANDS_SHOWN if card_type == "Land" else TYPE_SHOWN)
+        add(title, rows, fit, LANDS_SHOWN if card_type == "Land" else TYPE_SHOWN)
     return [section for section in sections if section[1]]

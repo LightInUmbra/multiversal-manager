@@ -37,6 +37,7 @@ ACCOUNT_KEYS = ("account_token", "account_email")
 # Below this width, the first-visit question suggests the phone layout
 WIDE = 900
 LAYOUT_KEY = "layout"  # the browser's answer: "desktop" or "mobile"
+TOAST_WIDTH = 380  # a message's width in the desktop layout
 GITHUB_URL = "https://github.com/LightInUmbra/multiversal-manager"
 
 def _money(value):
@@ -72,7 +73,8 @@ def main(page: ft.Page):
     progress = ft.ProgressBar(visible=False)
 
     def toast(message):
-        page.show_dialog(ft.SnackBar(ft.Text(message)))
+        # On a wide screen, a compact card at the bottom; on a phone, the width of the screen
+        page.show_dialog(ft.SnackBar(ft.Text(message), width=TOAST_WIDTH if desktop_layout() else None))
 
     def busy(label, fn):
         # Runs fn with the progress bar showing; a failure becomes a message instead of a crash.

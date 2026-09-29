@@ -91,6 +91,10 @@ def test_card_database_from_bulk_data():
     assert (card["mana_cost"], card["colors"], card["color_identity"], card["price"]) == ("{U}", "U", "U", 0.10)
     assert card["oracle_text"] == "Front.\n\nFlying"
     assert scryfall.oracle_record({"id": "t", "name": "Goblin", "layout": "token"}) is None
+    # No non-foil price: the foil one, not a missing price
+    foil_only = scryfall.oracle_record({"id": "s", "name": "Mind Stone", "finishes": ["nonfoil", "foil"],
+                                        "prices": {"usd": None, "usd_foil": "1.25"}})
+    assert (foil_only["price"], foil_only["foil"]) == (1.25, 1)
 
 
 def test_printings_grouped_with_finishes_and_owned(temp_db):

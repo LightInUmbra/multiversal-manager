@@ -1,5 +1,5 @@
 """
-The deck builder's Recommended tab: an EDHREC-style page for the deck's commander.
+The deck builder's Recommended tab: a page of cards for the deck's commander.
 The commander up top, with theme buttons for the direction you want to take the deck
 and a few filters, then sections of card images: High Synergy Cards, the staples,
 then each card type. How cards are picked is in synergy.py.

@@ -930,6 +930,15 @@ def card_rulings(name):
         """, (name,)).fetchall()
 
 
+def rulings_by_name():
+    # {card name: its rulings, one per line} for every card, in one query (for recommendations)
+    with _connect() as conn:
+        return dict(conn.execute("""
+            SELECT o.name, GROUP_CONCAT(r.comment, char(10)) FROM card_rulings r
+            JOIN oracle_cards o ON o.oracle_id = r.oracle_id GROUP BY o.name
+        """).fetchall())
+
+
 def has_card_database():
     with _connect() as conn:
         return conn.execute("SELECT EXISTS (SELECT 1 FROM oracle_cards)").fetchone()[0] == 1

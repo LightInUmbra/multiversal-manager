@@ -1,9 +1,10 @@
 import synergy
 
 
-def _card(name, type_line, text, rank=None, price=1.0, owned=0, identity=""):
+def _card(name, type_line, text, rank=None, price=1.0, owned=0, identity="", cmc=0, rulings=""):
     return {"name": name, "type_line": type_line, "oracle_text": text, "text": f"{type_line}\n{text}",
-            "edhrec_rank": rank, "price": price, "owned": owned, "color_identity": identity}
+            "edhrec_rank": rank, "price": price, "owned": owned, "color_identity": identity, "cmc": cmc,
+            "rulings": rulings}
 
 
 def test_themes_follow_what_the_commander_cares_about():
@@ -29,12 +30,14 @@ def test_themes_follow_what_the_commander_cares_about():
     assert "lands" in synergy.suggest_themes([windgrace])
 
 
-def test_recommendations_rank_fit_then_popularity_and_apply_filters():
+def test_recommendations_rank_fit_then_efficiency_and_apply_filters():
     commander = _card("Ghave", "Legendary Creature — Fungus Shaman", "Put a +1/+1 counter on target creature.")
     cards = [
         commander,
-        _card("Hardened Scales", "Enchantment", "If one or more +1/+1 counters would be put on a creature…", rank=300),
-        _card("Doubling Season", "Enchantment", "…twice that many +1/+1 counters…", rank=100, price=60, owned=1),
+        # Doubling Season is the more played (rank), but play counts don't decide anything
+        _card("Doubling Season", "Enchantment", "…twice that many +1/+1 counters…", rank=100, price=60, owned=1, cmc=5),
+        _card("Hardened Scales", "Enchantment", "If one or more +1/+1 counters would be put on a creature…", rank=300,
+              cmc=1),
         _card("Path to Exile", "Instant", "Exile target creature. Its controller may search their library "
               "for a basic land card.", rank=15),
         _card("Sol Ring", "Artifact", "{T}: Add {C}{C}.", rank=1),
@@ -48,7 +51,7 @@ def test_recommendations_rank_fit_then_popularity_and_apply_filters():
         return {title: [r["name"] for r in rows] for title, rows, _ in synergy.recommend([commander], pool, **filters)}
 
     shown = sections()
-    assert shown["High Synergy Cards"] == ["Doubling Season", "Hardened Scales"]   # same fit, more played first
+    assert shown["High Synergy Cards"] == ["Hardened Scales", "Doubling Season"]   # same fit, cheaper first
     assert shown["Ramp"] == ["Sol Ring"]
     assert shown["Removal"] == ["Path to Exile"]      # its rules text wins over being tagged ramp
     assert shown["Lands"] == ["Command Tower"]        # basics and the commander never show up
@@ -96,12 +99,25 @@ def test_show_more_adds_cards_to_a_section():
 def test_lands_leave_out_fetchlands_for_other_colors():
     commander = _card("Light-Paws", "Legendary Creature — Fox Advisor", "Whenever an Aura you control enters, "
                       "you may search your library for an Aura card.", identity="W")
-    cards = [_card("Polluted Delta", "Land", "Search your library for an Island or Swamp card.", rank=1),
-             _card("Windswept Heath", "Land", "Search your library for a Forest or Plains card.", rank=2),
-             _card("Command Tower", "Land", "{T}: Add one mana of any color.", rank=3)]
+    cards = [_card("Sejiri Refuge", "Land", "This land enters tapped.\n{T}: Add {W} or {U}.", rank=1),
+             _card("Polluted Delta", "Land", "Search your library for an Island or Swamp card.", rank=2),
+             _card("Windswept Heath", "Land", "Search your library for a Forest or Plains card.", rank=3),
+             _card("Command Tower", "Land", "{T}: Add one mana of any color.", rank=4)]
     sections = {title: [r["name"] for r in rows]
                 for title, rows, _ in synergy.recommend([commander], synergy.score(cards, [], {}, [commander]))}
-    assert sections["Lands"] == ["Windswept Heath", "Command Tower"]
+    # Lands making the commander's colors untapped come before one that enters tapped
+    assert sections["Lands"] == ["Windswept Heath", "Command Tower", "Sejiri Refuge"]
+
+
+def test_rulings_count_less_than_rules_text():
+    pool = {r["name"]: r for r in synergy.score([
+        _card("Anointed Procession", "Enchantment", "If an effect would create one or more tokens under your "
+              "control, it creates twice that many of those tokens instead."),
+        _card("Clever Copy", "Instant", "Copy target spell you control.",
+              rulings="If the copied spell creates tokens, the copy creates tokens too."),
+        _card("Shock", "Instant", "Shock deals 2 damage to any target.")], ["tokens"], {})}
+    assert pool["Anointed Procession"]["score"] > pool["Clever Copy"]["score"] == synergy.RULING_POINTS
+    assert pool["Shock"]["score"] == 0
 
 
 def test_theme_detection_edge_cases_from_the_150_commander_benchmark():

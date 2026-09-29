@@ -197,9 +197,12 @@ def oracle_record(data):
     faces = data.get("card_faces") or []
     front = faces[0] if faces else {}
     finishes = data.get("finishes") or []
-    finish = next((f for f in PRICE_KEYS if f in finishes), "nonfoil")
+    prices = data.get("prices") or {}
+    # The first finish with a price: some printings only have one for foil or etched
+    finish = next((f for f in PRICE_KEYS if f in finishes and prices.get(PRICE_KEYS[f][1])),
+                  next((f for f in PRICE_KEYS if f in finishes), "nonfoil"))
     code, price_key = PRICE_KEYS[finish]
-    price = (data.get("prices") or {}).get(price_key)
+    price = prices.get(price_key)
     return {
         "name": data["name"],
         "type_line": data.get("type_line") or front.get("type_line", ""),
@@ -252,6 +255,10 @@ def search(query, page=1, order="edhrec", direction="auto"):
     (Scryfall's: "edhrec", "tix", "penny", "name"…) and direction ("auto", "asc", "desc").
     The website's deck builder browses with this instead of the downloaded card database."""
     _require_online()
+    if "prefer:" not in query:
+        # Scryfall otherwise shows each card's newest printing, which can be one with no price at
+        # all (Mystery Booster Commander's Mind Stone); its default printing is a priced, regular one
+        query += " prefer:default"
     data = _get_json("/cards/search", {"q": query, "order": order, "dir": direction, "page": page})
     if data is None:  # nothing matches
         return [], False, 0

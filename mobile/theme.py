@@ -30,6 +30,11 @@ def apply(page):
         data_table_theme=ft.DataTableTheme(heading_row_color=COLORS["surface_container_high"],
                                            heading_text_style=ft.TextStyle(weight=ft.FontWeight.BOLD, color=GOLD)),
         dialog_theme=ft.DialogTheme(bgcolor=COLORS["surface_container"], shape=ft.RoundedRectangleBorder(radius=12)),
+        # Messages float as a small rounded card in the app's colors, not a full-width grey bar
+        snackbar_theme=ft.SnackBarTheme(behavior=ft.SnackBarBehavior.FLOATING, bgcolor=COLORS["surface_container_highest"],
+                                        content_text_style=ft.TextStyle(size=13, color=COLORS["on_surface"]),
+                                        shape=ft.RoundedRectangleBorder(radius=10, side=ft.BorderSide(1, COLORS["outline"])),
+                                        elevation=6),
     )
     page.fonts = FONTS
     page.theme = page.dark_theme = theme

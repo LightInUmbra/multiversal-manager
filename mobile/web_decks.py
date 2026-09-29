@@ -8,6 +8,7 @@
 # The website has no downloaded card database, so it asks Scryfall only for what it needs:
 # the list's cards once, Explore a page at a time, and Recommended the most played cards in
 # the commander's colors and themes (kept for the visit).
+import json
 import time
 
 import flet as ft
@@ -32,9 +33,10 @@ MY_CARDS, EXPLORE, RECOMMENDED, STATS = range(len(TABS))
 DETAIL_WIDTH = 250
 BROWSER_WIDTH = 420
 GRID_CARD = 120           # a card's width in the browsing grids: three across the right panel
-# A Commander deck's pool: the most played cards in its colors, then per theme its rules-text
-# matches and each of its Scryfall tags (175 cards a page, most played first)
-GENERAL_PAGES, THEME_PAGES, TAG_PAGES = 2, 1, 1
+# A Commander deck's pool, in Scryfall pages of 175 cards, cheapest first: per theme its
+# rules-text matches and its Scryfall tags, each staple's rules-text matches, and the lands
+# making its colors. GENERAL_PAGES: the cards its suggested creature types come from.
+GENERAL_PAGES, THEME_PAGES, TAG_PAGES, STAPLE_PAGES, LAND_PAGES = 2, 2, 1, 1, 4
 SHOWN = 12                # cards per recommendation section before Show More
 SHOW_MORE = 24
 MY_CARDS_SHOWN = 300
@@ -56,10 +58,18 @@ def popularity_order(format_key):
     return "edhrec", "auto", "most played in Commander first (Scryfall's play count)"
 
 
-# The deck table's columns: (heading, width or a share of what's left, right-aligned)
-GRID_HEADERS = [("Qty", 36, True), ("Card", 3, False), ("Type", 2, False), ("Mana", 84, False),
+def _scryfall_regex(pattern):
+    # A / would end Scryfall's regular expression early (+1/+1)
+    return pattern.replace("/", "\\/")
+
+
+# The deck table's columns: (heading, width in pixels, right-aligned). The card name takes the
+# space that's left (None); the edges between headings drag to resize the others.
+GRID_HEADERS = [("Qty", 36, True), ("Card", None, False), ("Type", 170, False), ("Mana", 84, False),
                 ("Price", 64, True), ("Owned", 54, True), ("", 20, False)]
-FLEX = 10  # widths up to this are shares of the leftover space, not pixels
+MIN_COLUMN = 20
+ROW_SIZES = {"Compact": 1, "Normal": 5, "Roomy": 10}  # a row's padding above and below the text
+TABLE_KEY = "deck_table"  # the browser's remembered column widths and row size
 
 
 def _money(value):
@@ -175,6 +185,26 @@ class DecksPage:
                     "shown": {}}
         self.collection_looked_up = False
         self.clicked_at = (None, 0)
+        # The deck table's layout, remembered in the browser (the database doesn't last there)
+        self.widths = [width for _, width, _ in GRID_HEADERS]
+        self.row_size = "Normal"
+        self.header_cells, self.row_lines = [], []
+        self.prefs = ft.SharedPreferences()
+        page.run_task(self._load_table)
+
+    async def _load_table(self):
+        try:
+            saved = json.loads(await self.prefs.get(TABLE_KEY) or "{}")
+        except ValueError:
+            return
+        widths = saved.get("widths")
+        if isinstance(widths, list) and len(widths) == len(GRID_HEADERS) and widths[1] is None:
+            self.widths = widths
+        if saved.get("rows") in ROW_SIZES:
+            self.row_size = saved["rows"]
+
+    def _save_table(self):
+        self.page.run_task(self.prefs.set, TABLE_KEY, json.dumps({"widths": self.widths, "rows": self.row_size}))
 
     # Moving around
 
@@ -518,10 +548,19 @@ class DecksPage:
                                 lambda e: self.set_add_to(e.control.value), 190),
                       _dropdown(self.group, [("Section", "Group: Section"), ("Type", "Group: Type")],
                                 lambda e: self.set_group(e.control.value), 160)]
-        header = ft.Container(ft.Row([self._cell(ft.Text(label.upper(), size=11, weight=ft.FontWeight.W_600,
-                                                         color=theme.GOLD), width, right)
-                                      for label, width, right in GRID_HEADERS], spacing=8),
-                              bgcolor=theme.COLORS["surface_container"], padding=ft.Padding.symmetric(horizontal=10, vertical=8))
+        tools.append(_dropdown(self.row_size, [(k, f"Rows: {k}") for k in ROW_SIZES],
+                               lambda e: self.set_row_size(e.control.value), 150))
+        # Headings with a drag handle between each two, in place of the rows' 8 pixel spacing
+        cells, self.header_cells = [], []
+        for i, (label, _, right) in enumerate(GRID_HEADERS):
+            cell = self._cell(ft.Text(label.upper(), size=11, weight=ft.FontWeight.W_600, color=theme.GOLD), i, right)
+            self.header_cells.append(cell)
+            cells += [cell] + ([self._resize_handle(i)] if i < len(GRID_HEADERS) - 1 else [])
+        header = ft.ContextMenu(
+            ft.Container(ft.Row(cells, spacing=0), bgcolor=theme.COLORS["surface_container"],
+                         padding=ft.Padding.symmetric(horizontal=10, vertical=8)),
+            secondary_items=[ft.PopupMenuItem(content="Reset column widths", on_click=lambda e: self.reset_columns())],
+            secondary_trigger=ft.ContextMenuTrigger.DOWN)
         return ft.Column([
             ft.Container(ft.Row(tools, spacing=8), padding=10, border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE))),
             self.warn_box, header, self.deck_rows], spacing=0, expand=True)
@@ -530,7 +569,7 @@ class DecksPage:
         # The list's rows, into the same list (so it keeps its scroll position)
         self.warn_box.content = (ft.Container(_warn(s["problems"]), padding=ft.Padding.only(left=10, right=10, top=8, bottom=8))
                                  if s["problems"] else None)
-        rows, self.row_boxes = [], {}
+        rows, self.row_boxes, self.row_lines = [], {}, []
         for title, group in self._groups(s):
             rows.append(ft.Container(
                 ft.Text(f"{title} — {sum(e['quantity'] for e in group)}", font_family=theme.TITLE_FONT, size=12.5,
@@ -552,11 +591,43 @@ class DecksPage:
         self._fill_deck(self.s)
         self.page.update()
 
-    @staticmethod
-    def _cell(control, width, right=False):
-        share = width <= FLEX
-        return ft.Container(control, width=None if share else width, expand=width if share else None,
+    def set_row_size(self, size):
+        self.row_size = size
+        self._fill_deck(self.s)
+        self._save_table()
+        self.page.update()
+
+    def _cell(self, control, column, right=False):
+        width = self.widths[column]
+        return ft.Container(control, width=width, expand=1 if width is None else None,
                             alignment=ft.Alignment.CENTER_RIGHT if right else ft.Alignment.CENTER_LEFT)
+
+    def _resize_handle(self, i):
+        # The edge right of heading i resizes that column, or, right of the card name (which
+        # takes what's left), the column after it, which then grows as the edge moves left
+        column, sign = (i, 1) if self.widths[i] is not None else (i + 1, -1)
+        return ft.GestureDetector(
+            ft.Container(ft.Container(width=1, height=14, bgcolor=theme.COLORS["outline"]), width=8,
+                         alignment=ft.Alignment.CENTER, tooltip="Drag to resize · right-click to reset"),
+            mouse_cursor=ft.MouseCursor.RESIZE_COLUMN, drag_interval=30,
+            on_horizontal_drag_update=lambda e: self.resize_column(column, sign * (e.primary_delta or 0)),
+            on_horizontal_drag_end=lambda e: self._save_table())
+
+    def resize_column(self, column, change):
+        self.widths[column] = max(MIN_COLUMN, round(self.widths[column] + change))
+        self._apply_widths()
+
+    def reset_columns(self):
+        self.widths = [width for _, width, _ in GRID_HEADERS]
+        self._apply_widths()
+        self._save_table()
+
+    def _apply_widths(self):
+        # Resizes the headings and every row in place, so the list keeps its scroll position
+        for line in [self.header_cells] + [row.controls for row in self.row_lines]:
+            for cell, width in zip(line, self.widths):
+                cell.width = width
+        self.page.update()
 
     @staticmethod
     def _front_type(entry):
@@ -598,10 +669,11 @@ class DecksPage:
                  ft.Text(mark, color=theme.MUTED if legal is None else theme.LOSS if status else theme.GAIN,
                          tooltip="Legality not looked up yet" if legal is None else status)]
         on = self.selected == ("entry", e["id"])
+        line = ft.Row([self._cell(c, i, r) for i, (c, (_, _, r)) in enumerate(zip(cells, GRID_HEADERS))], spacing=8)
+        self.row_lines.append(line)
         box = ft.Container(
-            ft.Row([self._cell(c, w, r) for c, (_, w, r) in zip(cells, GRID_HEADERS)], spacing=8),
-            bgcolor=theme.COLORS["primary_container"] if on else None, on_click=lambda ev: self.click_entry(e),
-            padding=ft.Padding.symmetric(horizontal=10, vertical=5),
+            line, bgcolor=theme.COLORS["primary_container"] if on else None, on_click=lambda ev: self.click_entry(e),
+            padding=ft.Padding.symmetric(horizontal=10, vertical=ROW_SIZES[self.row_size]),
             border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)))
         self.row_boxes[e["id"]] = box
         return ft.ContextMenu(box, secondary_items=self._entry_menu(e, s), secondary_trigger=ft.ContextMenuTrigger.DOWN)
@@ -833,38 +905,42 @@ class DecksPage:
         if show:
             self.refill_tab()
 
-    def _search(self, query, pages, format_key):
-        # One Scryfall search's first pages, most played first; kept for the visit
+    def _search(self, query, pages):
+        # One Scryfall search's first pages, cheapest first (by mana value: nothing about how
+        # often cards are played); kept for the visit
         key = (query, pages)
         if key not in self.searches:
-            order, direction, _ = popularity_order(format_key)
             rows = []
             for page in range(1, pages + 1):
-                found, more, _ = scryfall.search(query, page, order, direction)
+                found, more, _ = scryfall.search(query, page, "cmc", "asc")
                 rows += found
                 if not more:
                     break
             self.searches[key] = rows
         return self.searches[key]
 
-    def _commander_pool(self, scope, theme_keys):
+    def _commander_pool(self, scope, identity, theme_keys):
         """(pool, {tag: names}) for a Commander deck, like the desktop's whole card database but
-        fetched to fit: the most played cards in its colors, plus for each theme the cards its
-        rules-text pattern finds and the cards Scryfall tags for it (which also give the tags)."""
-        queries = [(scope, GENERAL_PAGES, None)]
+        fetched to fit, found by what the cards say: for each theme the cards its rules-text
+        pattern finds and the cards Scryfall tags for it (which also give the tags), the cards
+        the staples' patterns find, and the lands that make or fetch the commander's colors."""
+        symbols = "\\{[" + (identity or "C") + "]\\}"
+        queries = [(f'{scope} t:land -t:basic (o:/{symbols}/ or o:"any color" or o:"search your library")',
+                    LAND_PAGES, None)]
+        queries += [(f"{scope} o:/{_scryfall_regex(pattern)}/", STAPLE_PAGES, None)
+                    for pattern, _, _ in synergy.STAPLES.values()]
         for key in theme_keys:
             if key.startswith("tribal:"):
                 creature_type = key.split(":", 1)[1]
                 queries.append((f"{scope} (t:{creature_type} or o:/\\b{creature_type}s?\\b/)", THEME_PAGES, None))
                 continue
             chosen = synergy.theme(key)
-            # A / would end Scryfall's regular expression early (+1/+1)
-            queries.append((f"{scope} o:/{chosen.cards.replace('/', chr(92) + '/')}/", THEME_PAGES, None))
+            queries.append((f"{scope} o:/{_scryfall_regex(chosen.cards)}/", THEME_PAGES, None))
             if chosen.tags:
                 # One search for all of a theme's tags: scoring only asks whether a card has any of them
                 queries.append((f"{scope} ({' or '.join(f'otag:{t}' for t in chosen.tags)})", TAG_PAGES, chosen.tags))
         found = self.busy("Loading cards for these themes",
-                          lambda: [(tag_names, self._search(q, pages, "commander")) for q, pages, tag_names in queries])
+                          lambda: [(tag_names, self._search(q, pages)) for q, pages, tag_names in queries])
         if found is None:
             return None, None
         pool, tags = {}, {}
@@ -888,7 +964,7 @@ class DecksPage:
         scope = self._scope(s)
         key = (scope, tuple(rec["themes"]))
         if key not in self.scored:
-            pool, tags = self._commander_pool(scope, rec["themes"])
+            pool, tags = self._commander_pool(scope, identity, rec["themes"])
             if pool is None:
                 return None
             self.scored[key] = synergy.score(pool, rec["themes"], tags, commanders)
@@ -950,7 +1026,7 @@ class DecksPage:
         if rec["list"] != self.list_id:
             # The commander's own suggestions, as on the desktop: creature types it names count
             # as tribes (known types: the ones in its colors' most played cards)
-            common = self.busy("Loading cards", lambda: self._search(self._scope(s), GENERAL_PAGES, "commander")) or []
+            common = self.busy("Loading cards", lambda: self._search(self._scope(s), GENERAL_PAGES)) or []
             offered = synergy.suggest_themes(commanders, synergy.known_types(r["type_line"] for r in common))
             rec.update(list=self.list_id, offered=offered[:THEMES_OFFERED], themes=offered[:2], shown={})
         sections = self._commander_sections(s, commanders, identity)
