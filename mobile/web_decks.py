@@ -2,12 +2,12 @@
 # panels, "layout A", plus a Stats tab). A home page of every deck, binder and wishlist, then
 # per list: its summary tiles, the selected card | the list grouped by section | cards to add
 # (My Cards, Explore, Recommended) and the deck's Stats. Every format's rules apply
-# (formats.py), Commander decks get brackets (brackets.py) and the same recommendations as
-# the desktop (synergy.py), and other formats get recommendations from the deck's own cards.
+# (formats.py), and Commander decks get brackets (brackets.py) and the same recommendations as
+# the desktop (synergy.py); like the desktop, other formats get none.
 #
 # The website has no downloaded card database, so it asks Scryfall only for what it needs:
-# the list's cards once, Explore a page at a time, and Recommended a pool of the most played
-# cards legal in the deck's format and colors (POOL_PAGES pages, kept for the visit).
+# the list's cards once, Explore a page at a time, and Recommended the most played cards in
+# the commander's colors and themes (kept for the visit).
 import time
 
 import flet as ft
@@ -18,7 +18,6 @@ import database as db
 import deck_stats
 import formats
 import importer
-import meta
 import scryfall
 import synergy
 import theme
@@ -33,7 +32,6 @@ MY_CARDS, EXPLORE, RECOMMENDED, STATS = range(len(TABS))
 DETAIL_WIDTH = 250
 BROWSER_WIDTH = 420
 GRID_CARD = 120           # a card's width in the browsing grids: three across the right panel
-POOL_PAGES = 4            # Scryfall pages (175 cards each) in a constructed deck's recommendation pool
 # A Commander deck's pool: the most played cards in its colors, then per theme its rules-text
 # matches and each of its Scryfall tags (175 cards a page, most played first)
 GENERAL_PAGES, THEME_PAGES, TAG_PAGES = 2, 1, 1
@@ -47,7 +45,6 @@ MANA = {"W": ("#F3E3A6", "#1A1300"), "U": ("#1F7BC8", "#FFFFFF"), "B": ("#8E7A99
         "R": ("#D9453B", "#FFFFFF"), "G": ("#2E9E5B", "#FFFFFF")}
 GENERIC = ("#CFC7B0", "#1A1300")
 COLOR_NAMES = {"W": "White", "U": "Blue", "B": "Black", "R": "Red", "G": "Green", "C": "Colorless"}
-DECK_TERMS = 6  # the deck's most repeated wording, searched for to fill a constructed deck's pool
 
 
 def popularity_order(format_key):
@@ -57,17 +54,6 @@ def popularity_order(format_key):
     if format_key == "penny":
         return "penny", "asc", "most played in Penny Dreadful first"
     return "edhrec", "auto", "most played in Commander first (Scryfall's play count)"
-
-
-def deck_terms(cards, n=DECK_TERMS):
-    """The two-word phrases a deck's cards repeat most ("deals 3", "3 damage"), counting
-    copies, for finding more cards like them. cards: dicts with name, oracle_text, quantity."""
-    counts = {}
-    for card in cards:
-        for phrase in synergy.phrases(card["oracle_text"], card["name"]):
-            if "cardname" not in phrase and not set(phrase) & set('{}/"'):
-                counts[phrase] = counts.get(phrase, 0) + card.get("quantity", 1)
-    return [p for p, _ in sorted(counts.items(), key=lambda kv: -kv[1])[:n]]
 
 
 # The deck table's columns: (heading, width or a share of what's left, right-aligned)
@@ -179,10 +165,8 @@ class DecksPage:
         self.add_to = "Main"
         self.selected = None          # ("entry", id) or ("card", Scryfall/collection row)
         self.spellbook = {}           # list id -> Commander Spellbook's reading, until the list changes
-        self.pools = {}               # Scryfall queries -> a constructed deck's recommendation pool, for the visit
         self.searches = {}            # (Scryfall query, pages) -> its cards, for the visit
         self.prepared = {}            # card name -> the card ready for scoring
-        self.card_rows = {}           # card name -> its Scryfall details (None: not found), for the visit
         self.scored = {}              # (query, themes) -> synergy.score() result
         self.explore = {"query": "", "type": "", "rows": [], "page": 0, "more": False, "total": 0, "for": None,
                         "format": "casual", "colors": True}
@@ -793,7 +777,7 @@ class DecksPage:
 
     def _scope(self, s, commander_only=False):
         # The Scryfall filter for cards that could go in this deck: its format, and a
-        # Commander deck's color identity (or, for recommendations, another deck's colors)
+        # Commander deck's color identity (or, for Explore's Deck's colors, another deck's colors)
         parts = []
         if s["is_deck"] and s["info"]["format"] != "casual":
             parts.append(f"legal:{s['info']['format']}")
@@ -825,8 +809,7 @@ class DecksPage:
                           ft.Text(f"Within: {scope}" if scope else "Every card", size=12, color=theme.MUTED, expand=True,
                                   no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)], spacing=8)
         found = self.explore["rows"]
-        order = ("played most on MTGO first" if meta.load(s["info"]["format"])
-                 else popularity_order(s["info"]["format"])[2])
+        order = popularity_order(s["info"]["format"])[2]
         note = ft.Text(f"{self.explore['total']:,} cards, {order}" if found else "No cards match.", size=12,
                        color=theme.MUTED)
         more = theme.button(f"Load {scryfall.SEARCH_PAGE} more", lambda e: self.load_explore())
@@ -844,41 +827,11 @@ class DecksPage:
         result = self.busy("Searching Scryfall", lambda: scryfall.search(self.explore["for"], page, order, direction))
         if result:
             rows, more, total = result
-            played = meta.load(self.explore["format"])
-            if played:  # the cards MTGO decks actually play first (within each page Scryfall sends)
-                rows.sort(key=lambda r: -played["cards"].get(r["name"], [0])[0])
             self.explore.update(rows=self.explore["rows"] + rows, page=page, more=more, total=total)
         else:
             self.explore["more"] = False
         if show:
             self.refill_tab()
-
-    def _pool(self, queries, format_key):
-        """The cards to recommend from, kept for the visit: for each query, its first pages in
-        the format's most-played order (POOL_PAGES pages shared between the queries)."""
-        order, direction, _ = popularity_order(format_key)
-        key = tuple(queries)
-        if key not in self.pools:
-            def fetch():
-                rows, pages = {}, max(1, POOL_PAGES // len(queries))
-                for query in queries:
-                    for page in range(1, pages + 1):
-                        found, more, _ = scryfall.search(query, page, order, direction)
-                        rows.update((r["name"], r) for r in found if r["name"] not in rows)
-                        if not more:
-                            break
-                return list(rows.values())
-
-            rows = self.busy("Loading cards to recommend", fetch)
-            if rows is None:
-                return None
-            owned = db.owned_by_name()
-            if order != "edhrec":  # synergy ranks popularity by edhrec_rank: here, the format's own order
-                rows = [{**r, "edhrec_rank": 1 + 20 * i} for i, r in enumerate(rows)]
-            self.pools[key] = [{**r, "owned": owned.get(r["name"].lower(), 0),
-                                "text": f"{r['type_line'] or ''}\n{r['oracle_text'] or ''}",
-                                "phrases": synergy.phrases(r["oracle_text"], r["name"])} for r in rows]
-        return self.pools[key]
 
     def _search(self, query, pages, format_key):
         # One Scryfall search's first pages, most played first; kept for the visit
@@ -946,61 +899,6 @@ class DecksPage:
             max_price=PRICES[rec["price"]], staples=rec["staples"], bracket=s["info"]["bracket"], precon_title="",
             game_changers=len(report.game_changers) if report else 0, more=dict(rec["shown"]))
 
-    def _cards_named(self, names):
-        # Card details and images for these names, looked up once per visit (75 per request)
-        missing = [n for n in names if n not in self.card_rows]
-        if missing:
-            found = self.busy("Looking up cards", lambda: scryfall.fetch_card_data(missing)) or []
-            for row in found:
-                self.card_rows[row["name"]] = row
-                self.card_rows[row["name"].split(" // ")[0]] = row  # MTGO names split cards by their front
-            for name in missing:
-                self.card_rows.setdefault(name, None)  # not on Scryfall: don't ask again
-        return [self.card_rows[n] for n in names if self.card_rows.get(n)]
-
-    def _meta_sections(self, s, played):
-        """recommend()-style sections for a format MTGO plays, from what its decks actually run:
-        cards played with the deck's cards (spells, then lands), the format's top cards and
-        sideboard cards in the deck's colors."""
-        rec, fmt = self.rec, s["fmt"]
-        deck = [e["name"] for e in s["entries"] if e["section"] in formats.MAIN_SECTIONS | formats.SIDE_SECTIONS]
-        played_with, top = meta.recommend(played, deck)
-        colors = set(_colors(s["entries"]))
-        total = played["decks"] or 1
-        side = sorted(((n, c[1] / total, f"In {round(100 * c[1] / total)}% of sideboards")
-                       for n, c in played["cards"].items() if c[1] and n not in set(deck)), key=lambda t: -t[1])
-        notes = {}
-
-        def rows(candidates, count, keep=lambda r: True):
-            notes.update((n, note) for n, _, note in candidates)
-            found = self._cards_named([n for n, _, _ in candidates[:count]])
-            return [{**r, "note": notes.get(r["name"]) or notes.get(r["name"].split(" // ")[0])} for r in found
-                    if keep(r) and "Basic" not in (r["type_line"] or "") and not (rec["owned"] and not s["owned"].get(r["name"].lower()))
-                    and not (PRICES[rec["price"]] and (r["price"] or 0) > PRICES[rec["price"]])]
-
-        def in_colors(r):
-            return set(r["color_identity"] or "") <= colors if colors else True
-
-        def in_deck_colors(r):
-            # Colored and within the deck's colors: colorless staples (Eldrazi, Urza's Saga) fit any
-            # deck on paper but aren't what a red deck is after
-            return bool(r["color_identity"]) and in_colors(r) if colors else True
-
-        def is_land(r):
-            return "Land" in (r["type_line"] or "").split("//")[0]
-
-        def take(title, found):
-            wanted = SHOWN + rec["shown"].get(title, 0)
-            return (title, found[:wanted], max(0, len(found) - wanted))
-
-        partners = rows(played_with, 90 + rec["shown"].get("Played With Your Cards", 0))
-        return [section for section in (
-            take("Played With Your Cards", [r for r in partners if not is_land(r)]),
-            take("Lands", [r for r in partners if is_land(r)]),
-            take(f"Top Cards in {fmt.label}", rows(top, 60 + rec["shown"].get(f"Top Cards in {fmt.label}", 0), in_deck_colors)),
-            take("Sideboard Cards", rows(side, 40 + rec["shown"].get("Sideboard Cards", 0), in_colors)),
-        ) if section[1]]
-
     def _theme_picker(self, commanders):
         # Suggested themes as chips, every other theme (and tribe) under More themes, like the desktop
         rec = self.rec
@@ -1038,61 +936,33 @@ class DecksPage:
             theme.button("Cancel", lambda e: self.page.pop_dialog()), theme.button("Add", go, primary=True)]))
 
     def _recommended(self, s):
-        entries, is_commander = s["entries"], s["fmt"].commander
+        entries = s["entries"]
+        if not s["fmt"].commander:
+            # As on the desktop (lists.py): recommendations are for Commander decks only
+            return ft.Text("Recommendations are for Commander decks. Pick a deck with a Commander-style "
+                           "format (Commander, Brawl, Oathbreaker…), or start one with New….", color=theme.MUTED)
         commanders = [dict(e) for e in entries if e["section"] == "Commander" and e["oracle_text"] is not None]
-        if is_commander and not commanders:
+        if not commanders:
             return ft.Text("Put a card in the Commander section (select it, then Move ▾ on the left) to get "
                            "recommendations for it.", color=theme.MUTED)
-        # Other formats build around the deck itself: the cards it already has
-        basis = commanders if is_commander else [dict(e) for e in deck_stats.counted(entries) if e["oracle_text"] is not None]
-        if not basis:
-            return ft.Text("Add a few cards first: recommendations follow the deck's colors and the cards in it.",
-                           color=theme.MUTED)
         rec = self.rec
-        identity = synergy.identity_of(basis) if is_commander else _colors(entries)
+        identity = synergy.identity_of(commanders)
         if rec["list"] != self.list_id:
             # The commander's own suggestions, as on the desktop: creature types it names count
             # as tribes (known types: the ones in its colors' most played cards)
-            offered = []
-            if is_commander:
-                common = self.busy("Loading cards", lambda: self._search(self._scope(s), GENERAL_PAGES, "commander")) or []
-                offered = synergy.suggest_themes(basis, synergy.known_types(r["type_line"] for r in common))
+            common = self.busy("Loading cards", lambda: self._search(self._scope(s), GENERAL_PAGES, "commander")) or []
+            offered = synergy.suggest_themes(commanders, synergy.known_types(r["type_line"] for r in common))
             rec.update(list=self.list_id, offered=offered[:THEMES_OFFERED], themes=offered[:2], shown={})
-        played = None if is_commander else self.busy(
-            "Loading what's played in " + s["fmt"].label, lambda: meta.load(s["info"]["format"]))
-        if is_commander:
-            sections = self._commander_sections(s, basis, identity)
-        elif played:
-            sections = self._meta_sections(s, played)
-        else:
-            query = self._scope(s) or "game:paper"
-            # A constructed deck's pool: the most played cards, plus cards worded like its own
-            terms = deck_terms(basis)
-            queries = [query] + ([f"{query} ({' or '.join(f'o:{chr(34)}{t}{chr(34)}' for t in terms)})"] if terms else [])
-            pool = self._pool(queries, s["info"]["format"])
-            sections = None if pool is None else synergy.recommend_similar(
-                basis, pool, in_deck=[e["name"] for e in entries], owned_only=rec["owned"],
-                max_price=PRICES[rec["price"]], more=dict(rec["shown"]))
+        sections = self._commander_sections(s, commanders, identity)
         if sections is None:
             return ft.Text("Couldn't load cards from Scryfall. Try again in a moment.", color=theme.MUTED)
 
         filters = [ft.Checkbox(label="Cards I own", value=rec["owned"], on_change=lambda e: self._rec(owned=e.control.value)),
-                   ft.Checkbox(label="Staples", value=rec["staples"], visible=is_commander,
-                               on_change=lambda e: self._rec(staples=e.control.value)),
+                   ft.Checkbox(label="Staples", value=rec["staples"], on_change=lambda e: self._rec(staples=e.control.value)),
                    _dropdown(rec["price"], [(k, k) for k in PRICES], lambda e: self._rec(price=e.control.value), 130)]
-        if is_commander:
-            controls = [ft.Text(f"Build around (color identity {identity or 'colorless'}):", size=12, color=theme.MUTED),
-                        self._theme_picker(basis)]
-        elif played:
-            controls = [ft.Text(f"From {played['decks']:,} {s['fmt'].label} decklists in MTGO Leagues and Challenges "
-                                f"over the last {played.get('days', meta.DAYS)} days (updated {played['updated']}): what decks with your "
-                                f"cards also play, and what the format plays most.", size=12, color=theme.MUTED)]
-        else:
-            controls = [ft.Text(f"Cards legal in {s['fmt'].label} in the deck's colors ({identity or 'colorless'}), "
-                                f"ranked by how much they share your cards' wording, then how much they're played "
-                                f"({popularity_order(s['info']['format'])[2]}).", size=12, color=theme.MUTED)]
-        controls.append(ft.Row(filters, spacing=4))
-        if is_commander and s["info"]["bracket"]:
+        controls = [ft.Text(f"Build around (color identity {identity or 'colorless'}):", size=12, color=theme.MUTED),
+                    self._theme_picker(commanders), ft.Row(filters, spacing=4)]
+        if s["info"]["bracket"]:
             controls.append(ft.Text(f"Aiming for {brackets.label(s['info']['bracket'])}: cards that don't fit are left out.",
                                     size=11.5, color=theme.MUTED))
         for title, rows, more in sections:
