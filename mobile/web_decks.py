@@ -8,7 +8,6 @@
 # The website has no downloaded card database, so it asks Scryfall only for what it needs:
 # the list's cards once, Explore a page at a time, and Recommended a pool of the most played
 # cards legal in the deck's format and colors (POOL_PAGES pages, kept for the visit).
-import sys
 import time
 
 import flet as ft
@@ -16,19 +15,16 @@ import flet as ft
 import brackets
 import card_form
 import database as db
-import deck_links
 import deck_stats
 import formats
 import importer
 import meta
 import scryfall
-import sync
 import synergy
 import theme
 from importer import SECTIONS
 from web_desktop import PAGE_PADDING, tile
 
-WEB = sys.platform == "emscripten"  # in the browser, deck links go through the Supabase relay
 KINDS ={"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
 SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
                   "Sideboard": "Sideboard", "Maybeboard": "Maybeboard", "": "Cards"}
@@ -306,22 +302,14 @@ class DecksPage:
         kind = _dropdown("deck", KINDS.items(), None, 200)
         fmt = _dropdown("commander", [(k, f.label) for k, f in formats.FORMATS.items()], None, 260)
         kind.on_select = lambda e: (setattr(fmt, "visible", kind.value == "deck"), self.page.update())
-        text = _field("Paste a deck list (optional): Arena, Moxfield, MTGO or \"4 Lightning Bolt\" lines, "
-                      "or an Archidekt or MTGGoldfish link", multiline=True, width=536)
+        text = _field("Paste a deck list (optional): Arena, Moxfield, MTGO or \"4 Lightning Bolt\" lines",
+                      multiline=True, width=536)
         text.visible = paste
-        reveal = ft.TextButton("Paste a deck list or link…", visible=not paste)
+        reveal = ft.TextButton("Paste a deck list…", visible=not paste)
         reveal.on_click = lambda e: (setattr(text, "visible", True), setattr(reveal, "visible", False), self.page.update())
 
         def create(e):
             pasted = (text.value or "").strip()
-            if deck_links.is_link(pasted):
-                # A link brings its own name (Archidekt's), used when none was typed
-                found = self.read_link(pasted)
-                if found is None:
-                    return
-                if found[0] and not name.value.strip():
-                    name.value = found[0]
-                pasted = found[1]
             if not name.value.strip():
                 name.error_text = "Give it a name"
                 self.page.update()
@@ -1238,11 +1226,6 @@ class DecksPage:
         """Adds a pasted list: lines like "4 Lightning Bolt (M11) 149" under optional section
         headers. Cards go to section, or to the list's own headers when section is None."""
         is_deck = self._info()["kind"] == "deck" if is_deck is None else is_deck
-        if deck_links.is_link(text):
-            found = self.read_link(text)
-            if found is None:
-                return
-            text = found[1]
         rows, errors = importer.parse_text(text)
         if not rows:
             self.toast(errors[0] if errors else "No cards found in that text.")
@@ -1262,19 +1245,9 @@ class DecksPage:
             message += f" Not found: {', '.join(missing[:5])}{'…' if len(missing) > 5 else ''}."
         self.toast(message)
 
-    def read_link(self, url):
-        """(deck name or None, deck list) from an Archidekt or MTGGoldfish link, or None with a
-        message saying why not. The website goes through its Supabase relay (see deck_links)."""
-        try:
-            found = self.busy("Reading the deck link", lambda: deck_links.fetch(url.strip(), relay=WEB, key=sync.SUPABASE_KEY))
-        except deck_links.LinkError as error:  # busy() only catches the network's errors
-            self.toast(str(error))
-            return None
-        return found
-
     def import_dialog(self):
         text = _field("Paste a deck list (Arena, Moxfield, MTGO, or \"4 Lightning Bolt\" lines, with Commander, "
-                      "Sideboard… headers if you like), or an Archidekt or MTGGoldfish link", multiline=True, width=536)
+                      "Sideboard… headers if you like)", multiline=True, width=536)
 
         def go(e):
             self.page.pop_dialog()
