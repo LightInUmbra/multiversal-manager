@@ -362,11 +362,7 @@ def update(progress=None, notes=True):
         info = scryfall._get_json("/bulk-data/rulings")
         if fetched("rulings") and fetched("rulings")[0] == info["updated_at"] and db.has_rulings():
             return info["updated_at"], None
-        with requests.get(info["jsonl_download_uri"], headers=HEADERS, timeout=TIMEOUT, stream=True) as response:
-            response.raise_for_status()
-            with gzip.open(response.raw, "rt", encoding="utf-8") as lines:
-                db.replace_rulings(json.loads(line) for line in lines if line.strip())
-        return info["updated_at"], None
+        return download_rulings(info), None
     attempt("rulings", total, rulings)
 
     if not notes:
@@ -376,6 +372,17 @@ def update(progress=None, notes=True):
     cr = parse_cr(text("cr")) if text("cr") else None
     notes_changed, notes_errors = set_notes.update(progress, cr.keywords() if cr else {}, ability_words(cr))
     return changed + notes_changed, errors + notes_errors
+
+
+def download_rulings(info=None):
+    # Every card's rulings from Scryfall's bulk file into the database (replacing what's there);
+    # returns the file's updated_at. info: its bulk-data entry, if already asked for
+    info = info or scryfall._get_json("/bulk-data/rulings")
+    with requests.get(info["jsonl_download_uri"], headers=HEADERS, timeout=TIMEOUT, stream=True) as response:
+        response.raise_for_status()
+        with gzip.open(response.raw, "rt", encoding="utf-8") as lines:
+            db.replace_rulings(json.loads(line) for line in lines if line.strip())
+    return info["updated_at"]
 
 
 def ability_words(cr):

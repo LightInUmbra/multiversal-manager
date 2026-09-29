@@ -1,6 +1,6 @@
-# Pushing a version tag (git tag v1.1.0 && git push origin v1.1.0) tests the code, builds
-# the installer and the portable zip on Windows, and publishes them as a GitHub Release,
-# then builds the Android app and adds its APK to that release
+# Pushing a version tag (git tag v1.1.0 && git push origin v1.1.0) tests the code, rebuilds
+# the interaction data, builds the installer and the portable zip on Windows, and publishes
+# them as a GitHub Release, then builds the Android app and adds its APK to that release
 name: Release
 
 on:
@@ -30,6 +30,19 @@ jobs:
         run: python -m pytest
         env:
           QT_QPA_PLATFORM: offscreen
+
+      # Which cards work together (interactions.py), rebuilt from Scryfall's newest card data
+      # and rulings so every release ships up-to-date data; the Android build reuses the file
+      - name: Rebuild the interaction data
+        run: python interactions.py build --download
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: interactions
+          path: interactions.json.gz
 
       - name: Install Inno Setup
         run: choco install innosetup --no-progress -y
@@ -61,6 +74,11 @@ jobs:
         with:
           python-version: "3.14"
           cache: pip
+
+      # The interaction data the Windows build made (replacing the committed copy)
+      - uses: actions/download-artifact@v4
+        with:
+          name: interactions
 
       - uses: actions/setup-java@v5
         with:

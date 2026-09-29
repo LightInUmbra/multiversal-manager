@@ -119,6 +119,17 @@ def test_lands_leave_out_fetchlands_for_other_colors():
     assert sections["Lands"] == ["Windswept Heath", "Command Tower", "Sejiri Refuge"]
 
 
+def test_without_rulings_text_the_shipped_ruling_themes_count(monkeypatch):
+    # The website has no rulings, only the themes interactions.json.gz says they match
+    import interactions
+    monkeypatch.setattr(interactions, "_loaded", interactions.Interactions({"ruling_themes": {"Clever Copy": ["tokens"]}}))
+    pool = {r["name"]: r for r in synergy.score([
+        _card("Clever Copy", "Instant", "Copy target spell you control."),
+        _card("Shock", "Instant", "Shock deals 2 damage to any target.")], ["tokens"], {})}
+    assert pool["Clever Copy"]["score"] == synergy.RULING_POINTS
+    assert pool["Shock"]["score"] == 0
+
+
 def test_rulings_count_less_than_rules_text():
     pool = {r["name"]: r for r in synergy.score([
         _card("Anointed Procession", "Enchantment", "If an effect would create one or more tokens under your "

@@ -247,10 +247,12 @@ def load(identity, tags, commander_names=(), cards=None, fetch=False, progress=N
     can't be fetched just counts as empty."""
     if cards is None:
         rows, _ = db.search_cards(False, format_key="commander", identity=identity, limit=1_000_000)
-        rulings = db.rulings_by_name()  # empty until the Rules window has downloaded them
+        # Empty until the Rules window has downloaded them (then the shipped data's stand in);
+        # rulings explaining a mechanic word for word on many cards say nothing about the card
+        rulings = interactions.own_rulings({name: text.split("\n") for name, text in db.rulings_by_name().items()})
         cards = [{**row, "text": f"{row['type_line'] or ''}\n{row['oracle_text'] or ''}",
-                  "phrases": phrases(row["oracle_text"], row["name"]), "rulings": rulings.get(row["name"], "")}
-                 for row in rows]
+                  "phrases": phrases(row["oracle_text"], row["name"]),
+                  "rulings": "\n".join(rulings.get(row["name"], ()))} for row in rows]
     fetch = fetch and not scryfall.offline
     found, missing = {}, []
     for number, tag in enumerate(tags, start=1):
@@ -354,8 +356,8 @@ def score(cards, theme_keys, tags, commanders=()):
     load()). A card's "rulings" (text, optional) count when its rules text doesn't
     match a theme, and working with the commanders (interactions.py) counts too. The slow
     part of the recommendations, so it's worked out once per choice of themes, not per filter."""
-    matchers = [(re.compile(t.cards, re.IGNORECASE), [tags.get(tag, set()) for tag in t.tags], t.types)
-                for t in map(theme, theme_keys)]
+    matchers = [(key, re.compile(t.cards, re.IGNORECASE), [tags.get(tag, set()) for tag in t.tags], t.types)
+                for key, t in zip(theme_keys, map(theme, theme_keys))]
     # Rules text (3) + a tag (2) for every theme, plus the commander's wording and working with it
     best = 5 * len(matchers) + ECHO_POINTS + (INTERACTION_POINTS if commanders else 0)
     engine = interactions.load()
@@ -367,12 +369,15 @@ def score(cards, theme_keys, tags, commanders=()):
     pool = []
     for card in cards:
         points = 0
+        # Its rulings: the text where downloaded (the desktop), else the themes they match from
+        # the shipped data (the website; no creature types there, those come and go with the deck)
         rulings = card.get("rulings") or ""
-        for pattern, tag_sets, types in matchers:
+        ruled = engine.ruling_themes.get(card["name"], frozenset()) if not rulings else frozenset()
+        for key, pattern, tag_sets, types in matchers:
             # A theme with no Scryfall tags (tribal, say) counts its rules text for both
             if pattern.search(card["text"]):
                 points += 3 if tag_sets else 5
-            elif rulings and pattern.search(rulings):
+            elif (rulings and pattern.search(rulings)) or key in ruled:
                 points += RULING_POINTS
             points += 2 if any(card["name"] in names for names in tag_sets) else 0
             points += 1 if any(t in (card["type_line"] or "") for t in types) else 0

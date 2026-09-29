@@ -47,6 +47,29 @@ def test_ruling_links_leave_out_stock_examples_named_by_many_cards():
     assert ix.ruling_links(cards, rulings) == {}
 
 
+def test_ruling_themes_are_the_ones_only_the_rulings_match():
+    import synergy
+    cards = {c["name"]: c for c in (RHYS, ALTAR, _card("Clever Copy", "Instant", "Copy target spell you control."))}
+    rulings = {"Clever Copy": ["If the copied spell creates tokens, the copy creates tokens too."],
+               "Rhys the Redeemed": ["The copies are tokens, so they're created, not cast."],  # its own text says so
+               "Ashnod's Altar": ["Mana abilities don't use the stack. Sacrificing an Elf or Wolves works too. "
+                                  "In a Two-Headed Giant game, or with The Lord of the Rings, it's the same. "
+                                  "Choose a type, such as Fungus or Archer. Wizards of the Coast says so; see Wizards.com."]}
+    assert ix.ruling_themes(cards, rulings, synergy.THEMES) == {"Clever Copy": ["tokens"]}
+    # Creature types the rulings name (by their plural too), as tribal theme keys; Rhys's rulings add nothing
+    found = ix.ruling_themes(cards, rulings, synergy.THEMES, ["Elf", "Wolf", "Giant", "Lord", "Fungus", "Archer",
+                                                              "Wizard"], synergy.tribal_theme)
+    assert found["Ashnod's Altar"] == ["tribal:Elf", "tribal:Wolf"]
+    assert "Rhys the Redeemed" not in found
+
+
+def test_rulings_copied_onto_many_cards_are_left_out():
+    boilerplate = "Prepared creatures create a copy of their prepare spell."
+    rulings = {f"Card {n}": [boilerplate] for n in range(ix.BOILERPLATE)}
+    rulings["Card 0"] = [boilerplate, "Card 0's own ruling."]
+    assert ix.own_rulings(rulings) == {"Card 0": ["Card 0's own ruling."]}
+
+
 def test_interactions_say_why_and_find_partners():
     data = {"roles": {"Rhys the Redeemed": [["tokens"], ["tokens"], 1], "Anointed Procession": [[], ["tokens"], 4],
                       "Raise the Alarm": [["spells", "tokens"], [], 2], "Blood Artist": [["lifegain"], ["deaths"], 2]},

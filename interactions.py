@@ -12,6 +12,11 @@ It's built from the desktop's card database and rulings: open the Deck Builder a
 window once so both are downloaded, then now and then run this and commit the file:
 
     python interactions.py build
+
+Every release rebuilds it anyway (.github/workflows/release.yml), downloading both first into
+a throwaway database, so each version ships up-to-date data:
+
+    python interactions.py build --download
 """
 
 # Imports
@@ -31,6 +36,11 @@ WORD_USES = 3       # a one-word name written in lowercase this often in rulings
 # A card the rulings of more cards than this name is their stock example ("such as Stifle",
 # "if you control Doubling Season") or a term (Two-Headed Giant, the format), not a partner
 MAX_REFERENCES = 15
+# A ruling word for word on this many cards explains a mechanic ("prepare", cascade), not the
+# card: over half of what rulings matched came from these, so they're left out
+BOILERPLATE = 10
+_EXAMPLE_CLAUSE = re.compile(r"(?:such as|for example|e\.g\.,?)[^.;:)]*", re.IGNORECASE)
+_CAPITALIZED_RUN = re.compile(r"[A-Z][\w'-]*(?:\s+(?:(?:of|the)\s+)*[A-Z][\w'-]*)+")  # "Wizards of the Coast"
 _EXAMPLE = re.compile(r"(?:such as|for example|e\.g\.,?)[^.;:)]*$", re.IGNORECASE)
 SUMMARY_SHOWN = 4   # example cards per line of a card's "Works well with"
 
@@ -131,6 +141,13 @@ def roles_of(card):
 
 # Rulings
 
+def own_rulings(rulings):
+    """{card: [ruling, …]} without the rulings shared word for word by BOILERPLATE or more
+    cards: those explain a mechanic every card with it has, and say nothing about the card."""
+    copies = Counter(text for texts in rulings.values() for text in set(texts))
+    return {name: kept for name, texts in rulings.items() if (kept := [t for t in texts if copies[t] < BOILERPLATE])}
+
+
 def ruling_links(cards, rulings, set_names=(), subtypes=()):
     """{(card, other): ruling} for the rulings on a card that name another card. rulings:
     {card: [ruling, …]}. Some names show up in rulings as something else, so they don't count:
@@ -168,6 +185,43 @@ def ruling_links(cards, rulings, set_names=(), subtypes=()):
     return {pair: text for pair, text in links.items() if named_by[pair[1]] <= MAX_REFERENCES}
 
 
+def ruling_themes(cards, rulings, themes, creature_types=(), tribal=None):
+    """{card: [theme key, …]} for the themes (synergy.THEMES) a card's rulings match but its own
+    type line and rules text don't: all synergy.score() needs of the rulings, small enough for
+    the website to have (the rulings themselves are about 4 MB). cards: {name: card}. With
+    creature_types and tribal (synergy.tribal_theme), the creature types too, as the tribal
+    theme keys ("tribal:Elf") the deck builder makes of them."""
+    type_words = set(creature_types)
+
+    def names_out(text, name):
+        # Types are what's left once names and examples are out: the card's own name (Ramses,
+        # Assassin Lord), examples ("such as Fungus or Archer"), and any capitalized run with a
+        # word that isn't a type (Two-Headed Giant, The Lord of the Rings; "Human Wizard" stays)
+        text = text.replace("’", "'")  # rulings write "Wurm’s Tooth" as often as "Wurm's Tooth"
+        text = re.sub(r"\S+\.(?:com|org|net)\S*", " ", text)  # "please visit Wizards.com"
+        for own in {name, *name.split(" // "), name.split(",")[0]}:
+            text = text.replace(own, " ")
+        text = _EXAMPLE_CLAUSE.sub(" ", text)
+        return _CAPITALIZED_RUN.sub(lambda m: m.group() if set(m.group().split()) <= type_words else " ", text)
+
+    found = {}
+    for name, texts in rulings.items():
+        card = cards.get(name)
+        if card is None:
+            continue
+        own, text = f"{card['type_line'] or ''}\n{card['oracle_text'] or ''}", "\n".join(texts)
+        keys = [key for key, t in themes.items()
+                if re.search(t.cards, text, re.IGNORECASE) and not re.search(t.cards, own, re.IGNORECASE)]
+        # Types are capitalized, so case counts ("Elf", not "itself"); a type's first letters
+        # rule out most of them before any pattern runs ("Wol" finds Wolf and Wolves)
+        typed = names_out(text, name) if creature_types else ""
+        keys += [f"tribal:{kind}" for kind in creature_types if kind[:-1] in typed
+                 and re.search(tribal(kind).cards, typed) and not re.search(tribal(kind).cards, own)]
+        if keys:
+            found[name] = keys
+    return found
+
+
 # The data
 
 class Interactions:
@@ -179,6 +233,8 @@ class Interactions:
         roles = data.get("roles", {})
         self.roles = {name: (frozenset(entry[0]), frozenset(entry[1])) for name, entry in roles.items()}
         self.cmc = {name: entry[2] for name, entry in roles.items() if len(entry) > 2}
+        # The themes each card's rulings match (see ruling_themes), for where the rulings aren't
+        self.ruling_themes = {name: frozenset(keys) for name, keys in data.get("ruling_themes", {}).items()}
         self.rulings = defaultdict(dict)
         for card, other, ruling in data.get("rulings", []):
             self.rulings[card][other] = ruling
@@ -269,13 +325,29 @@ def load():
 
 # Building the data (the desktop, now and then)
 
+def download():
+    """Fills the database (point db.DB_NAME somewhere else first) with Scryfall's card database
+    and rulings, as the Deck Builder and the Rules window would: for building on a machine
+    without them, like GitHub's at release time."""
+    import database as db
+    import finance
+    import rules
+    db.create_table()
+    print("Downloading the card database from Scryfall…", flush=True)
+    finance.update_market(None, None, history=False)
+    print("Downloading the rulings from Scryfall…", flush=True)
+    rules.download_rulings()
+
+
 def build(path=PATH):
     import database as db
     import scryfall
+    import synergy  # here: synergy imports this module
     cards = [dict(row) for row in db.card_texts()]
-    rulings = {name: text.split("\n") for name, text in db.rulings_by_name().items()}
+    rulings = own_rulings({name: text.split("\n") for name, text in db.rulings_by_name().items()})
     if not cards or not rulings:
-        raise SystemExit("Needs the card database and the rulings: open the Deck Builder and the Rules window once.")
+        raise SystemExit("Needs the card database and the rulings: open the Deck Builder and the Rules window once "
+                         "(or build with --download).")
     set_names = [s["name"] for s in scryfall._get_json("/sets")["data"]]
     roles = {}
     for card in cards:
@@ -285,16 +357,28 @@ def build(path=PATH):
     subtypes = {t for c in cards for line in (c["type_line"] or "").split(" // ") if "—" in line
                 for t in line.split("—", 1)[1].split()}
     links = ruling_links([c["name"] for c in cards], rulings, set_names, subtypes)
+    creature_types = synergy.known_types(c["type_line"] for c in cards if c["type_line"])
+    themes = ruling_themes({c["name"]: c for c in cards}, rulings, synergy.THEMES, creature_types, synergy.tribal_theme)
     data = {"built": date.today().isoformat(), "roles": roles,
-            "rulings": [[card, other, ruling] for (card, other), ruling in sorted(links.items())]}
+            "rulings": [[card, other, ruling] for (card, other), ruling in sorted(links.items())],
+            "ruling_themes": themes}
     with gzip.open(path, "wt", encoding="utf-8") as file:
         json.dump(data, file, separators=(",", ":"))
-    print(f"{len(roles):,} cards with roles, {len(links):,} ruling links -> {path} ({path.stat().st_size // 1024:,} KB)")
+    print(f"{len(roles):,} cards with roles, {len(links):,} ruling links, {len(themes):,} with themes in their "
+          f"rulings -> {path} ({path.stat().st_size // 1024:,} KB)")
 
 
 if __name__ == "__main__":
     import sys
+    import tempfile
     if sys.argv[1:] == ["build"]:
         build()
+    elif sys.argv[1:] == ["build", "--download"]:
+        # A throwaway database, so the download never touches a collection on this computer
+        import database as db
+        with tempfile.TemporaryDirectory() as folder:
+            db.DB_NAME = str(Path(folder) / "cards.db")
+            download()
+            build()
     else:
         sys.exit(__doc__)
