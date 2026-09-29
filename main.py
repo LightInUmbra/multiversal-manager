@@ -20,6 +20,7 @@ import backup
 import copy_details
 import database as db
 import finance
+import interactions
 import lists
 import rules_window
 import sealed
@@ -179,12 +180,16 @@ class MainWindow(QMainWindow):
         self.scryfall_button = QPushButton("View on Scryfall")
         self.scryfall_button.clicked.connect(self.open_on_scryfall)
         self.price_chart = HistoryChart(min_height=150)
+        self.detail_works = QLabel()  # "Works well with" (interactions.py)
+        self.detail_works.setWordWrap(True)
+        self.detail_works.setStyleSheet("color: palette(placeholder-text);")
 
         detail_panel = QWidget()
         detail_layout = QVBoxLayout(detail_panel)
         detail_layout.addWidget(self.card_image, stretch=1)
         detail_layout.addWidget(self.detail_name)
         detail_layout.addLayout(detail_form)
+        detail_layout.addWidget(self.detail_works)
         detail_layout.addWidget(self.price_chart)
         detail_layout.addWidget(self.scryfall_button)
 
@@ -665,6 +670,7 @@ class MainWindow(QMainWindow):
         if row is None:
             self.card_image.clear_image(f"{len(ids)} cards selected" if ids else "No card selected")
             self.detail_name.setText("")
+            self.detail_works.setText("")
             for widget in self.detail_fields.values():
                 widget.setText("")
             self.scryfall_button.setEnabled(False)
@@ -693,6 +699,8 @@ class MainWindow(QMainWindow):
         else:
             fields["Price as of"].setText("Entered manually")
         self.scryfall_button.setEnabled(bool(row["set_code"] and row["collector_number"]))
+        works = interactions.load().summary(row["name"])[:lists.WORKS_SHOWN]
+        self.detail_works.setText("Works well with:\n" + "\n".join(works) if works else "")
 
         if row["scryfall_id"]:
             history = db.get_price_history(row["scryfall_id"], row["foil"])

@@ -6,7 +6,9 @@
 
 Moxfield, Manabox, and Archidekt are all amazing tools that have shaped the way we view card prices, kept track of our collections and our decks. They do so much, but you know what they don't have (or don't have much of)? Interconnectivity. That's why I developed this: The Multiversal Manager! It's supposed to be a tool like those three, except by offering more! It offers a deck builder, finance/market tracker, and more features to come! The biggest thing of it all though? The convenience. Moxfield and Archidekt are available on the web, which is great when working on a computer; it makes a difference for mobile users though. ManaBox exists, but when you'd like to edit something, it HAS to be done via the app; not even the link can save you. That's where my tool comes in - It bridges that gap so not only do you have access to your collection and price tracking system at anytime, but you have it in your pocket, at home, and anywhere you can access a computer!
 
-It's a desktop app and an Android app that share one collection, with a web version on the way (more on that in [The Multiverse](#the-multiverse)).
+It's a desktop app and an Android app that share one collection, with a website in development that runs the same app in your browser (more on that in [The Multiverse](#the-multiverse)).
+
+Everything it recommends is worked out from the cards themselves (their rules text, official rulings and what they do together), never from play-count sites like EDHREC.
 
 ---
 
@@ -36,8 +38,9 @@ Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pa
 - **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section, and a grid of card images to build from, each showing how many copies you own.
 - **Build from what you have, or explore all of what MTG has to offer --** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
 - **Pick your printing --** Choosing a different printing opens a window with every version of the card: its image, set, rarity, and the price of each finish, plus how many you own.
-- **Recommendations for your commander --** The *Recommended* tab works it out on its own, with no play-count sites like EDHREC. Put a commander in a Commander deck and the app suggests directions to take it (Elf Tribal, +1/+1 Counters, Spellslinger and so on). Pick one or more and you'll get a page of card images: High Synergy Cards, the staples (ramp, card draw, removal, board wipes), then creatures, instants and every other card type. It's worked out from each card's rules text, its official rulings (once the Rules window has downloaded them) and Scryfall's community card tags; among cards that fit equally well, the cheaper one comes first, and for lands the one making more of your commander's colors. It works offline too. You can limit it to cards you own, set a price cap, and hide what's already in the deck. Give the deck a target bracket and it leaves out the cards that don't fit (Game Changers in Brackets 1–2, a fourth one in Bracket 3, mass land denial below Bracket 4), and Game Changers are marked.
+- **Recommendations for your commander --** The *Recommended* tab works it out on its own, with no play-count sites like EDHREC. Put a commander in a Commander deck and the app suggests directions to take it (Elf Tribal, +1/+1 Counters, Spellslinger and so on). Pick one or more and you'll get a page of card images: Works With Your Deck (the cards that interact with your commander and the cards already in the deck, each captioned with why, like "Makes tokens for Rhys the Redeemed"), High Synergy Cards, the staples (ramp, card draw, removal, board wipes), then creatures, instants and every other card type. It's worked out from each card's rules text, its official rulings (once the Rules window has downloaded them) and Scryfall's community card tags; among cards that fit equally well, the cheaper one comes first, and for lands the one making more of your commander's colors. It works offline too. You can limit it to cards you own, set a price cap, and hide what's already in the deck. Give the deck a target bracket and it leaves out the cards that don't fit (Game Changers in Brackets 1–2, a fourth one in Bracket 3, mass land denial below Bracket 4), and Game Changers are marked. Recommendations are for Commander-style decks (Commander, Brawl, Oathbreaker…); other formats don't get them.
 - **Commander Brackets --** Commander decks show which of Wizards' brackets (1 Exhibition to 5 cEDH) their cards fit, with their Game Changers, mass land denial, extra-turn cards and two-card infinite combos listed. Pick the bracket you're aiming for next to the format and anything that breaks it is marked in red. Game Changers come from Scryfall's card data and work offline; combos come from [Commander Spellbook](https://commanderspellbook.com) when you're online.
+- **What works together --** Select any card, in your collection or the Deck Builder, and its details list what it works well with: the cards its official rulings name, and what it provides or pays off (tokens, +1/+1 counters, creatures dying, a full graveyard, life gain, card draw, instants and sorceries, artifacts, enchantments, lands entering, enters abilities, Auras and Equipment) with a few cards on the other side. The app works this out itself from every card's rules text and rulings; see [interactions.py](interactions.py).
 - **Legality checks as you go --** Deck and sideboard size, copy limits (with exceptions for basic lands and "any number" cards), banned and restricted cards, and commander eligibility and color identity are all checked while you build.
 - **Know what's missing --** Cards you don't own are marked, and every list shows what it's worth and what the missing cards would cost you.
 - **Import and Export --** Deck lists from Arena, Moxfield and most other tools import fine, and export from the app/software as a CSV file.
@@ -96,7 +99,7 @@ The bigger idea is a set of connected apps that all share the same collection:
 |---|---|
 | **Desktop** | Available! |
 | **Android** | Available; collection and prices, Deck Builder, the rules judge, and a camera card scanner |
-| **Web** | Planned |
+| **Web** | In development; the desktop's layout in your browser (collection, Deck Builder with Commander recommendations, rules), signed in to the same account |
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.
 
@@ -158,6 +161,23 @@ python build.py
 
 This makes both versions in `dist/`: the portable zip and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), the installer. The version number is `VERSION` in `build.py`.
 
+### Building the website
+
+```
+python mobile/build_web.py
+python -m http.server -d mobile/build/web
+```
+
+The first line builds a static site in `mobile/build/web` (the phone app built with `flet build web`, so its Python runs in the browser and needs no server); the second serves it at http://localhost:8000 to try. The website keeps no collection between visits: signing in brings yours over from sync. Set `BASE_URL` to the folder it's served from (e.g. `multiversal-manager` for GitHub Pages) before building.
+
+### Updating which cards work together
+
+```
+python interactions.py build
+```
+
+Rebuilds `interactions.json.gz` from the card database and rulings on your computer (open the Deck Builder and the Rules window once so both are downloaded). It takes a few seconds; commit the file now and then, after new sets, so every app knows the new cards. Cards newer than the file still pair up by their rules text.
+
 ### Releasing a new version
 
 Tests run on GitHub for every push (the badge at the top). To publish a version, tag it and push the tag:
@@ -189,12 +209,16 @@ multiversal-manager/
     rules_library.json       # Game Concepts guides and verified interactions (shared data)
     lists.py                 # Deck Builder: decks, binders and wishlists
     recommendations.py       # Deck Builder's Recommended tab
-    synergy.py               # Commander themes and how recommendations are picked
+    synergy.py               # Commander themes and how recommendations are picked (card text, rulings, tags)
+    interactions.py          # Which cards work together: ruling links and what each card provides / pays off
+    interactions.json.gz     # Its data, built from every card and ruling (shared by every app)
+    deck_stats.py            # A deck's numbers, shared by every app: owned copies, totals, mana curve
     card_browser.py          # Card image grid / lightweight table, and the printing picker
     formats.py               # Formats and deck legality rules
     build.py                 # Builds the Windows app: portable zip and installer (installer.iss)
     brackets.py              # Commander Brackets: the brackets, Game Changers, and checking a deck
-    trends.py                # Price change math and the Trends window
+    price_changes.py         # How prices moved over a period, shared by every app
+    trends.py                # The Trends window
     database.py              # SQLite storage, price history and schema upgrades
     backup.py                # Daily backups, Back Up Now and Restore
     importer.py              # CSV / text list parsing and printing matching
@@ -211,13 +235,18 @@ multiversal-manager/
     ask.py                   # The rules judge's Ask a Rules Question, shared with the phone app
     card_scan.py             # Recognizing a card from the text read off a photo of it
     supabase/schema.sql      # The sync database's table and security rules
-    mobile/                  # The Android app (Flet), reusing the modules above
-        main.py              # Collection, sync and the tabs
-        decks.py             # Deck Builder
+    mobile/                  # The Android app and the website (Flet), reusing the modules above
+        main.py              # Collection, sync and the tabs; picks the phone or desktop layout
+        decks.py             # Deck Builder (phone)
         rules_tab.py         # Rules: ask, search and browse
         scan.py              # The camera card scanner
         card_reader/         # Flet extension: reads text on the phone with Google ML Kit
+        web_desktop.py       # The website's desktop layout: header, dashboard tiles, collection table
+        web_decks.py         # The website's Deck Builder, in the desktop's three-panel layout
+        card_form.py         # The website's Add / Edit Card window
+        theme.py             # Colors, fonts and shared controls for the phone and website
         build_apk.py         # Builds the APK
+        build_web.py         # Builds the website
     external/
         Magic-Projects/      # Submodule: the ScryFunctions toolkit and Card class
     tests/

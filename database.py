@@ -930,6 +930,12 @@ def card_rulings(name):
         """, (name,)).fetchall()
 
 
+def card_texts():
+    # Every card's name, type line, rules text and mana value (for building interactions.py's data)
+    with _connect() as conn:
+        return conn.execute("SELECT name, type_line, oracle_text, cmc FROM oracle_cards ORDER BY name").fetchall()
+
+
 def rulings_by_name():
     # {card name: its rulings, one per line} for every card, in one query (for recommendations)
     with _connect() as conn:

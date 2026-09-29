@@ -57,6 +57,7 @@ def build_app():
         "--hidden-import", "Functions.ScryFunctions",
         "--hidden-import", "classes.card",
         "--add-data", f"{ROOT / 'rules_library.json'}{os.pathsep}.",
+        "--add-data", f"{ROOT / 'interactions.json.gz'}{os.pathsep}.",   # which cards work together
         "--icon", str(ROOT / "assets" / "icon.ico"),                             # the .exe's icon
         "--add-data", f"{ROOT / 'assets' / 'icon.ico'}{os.pathsep}assets",      # the windows' icon
     ])

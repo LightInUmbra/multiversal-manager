@@ -27,3 +27,10 @@ def no_network(monkeypatch):
     monkeypatch.setattr(scryfall, "get_collection", offline)
     monkeypatch.setattr(scryfall, "get_set_codes", offline)
     monkeypatch.setattr(scryfall, "fuzzy_card", lambda name: None)
+
+
+@pytest.fixture(autouse=True)
+def no_interaction_data(monkeypatch):
+    # Tests don't depend on the shipped interactions.json.gz: cards pair up by their own text
+    import interactions
+    monkeypatch.setattr(interactions, "_loaded", interactions.Interactions())

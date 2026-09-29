@@ -35,7 +35,9 @@ def test_recommendations_rank_fit_then_efficiency_and_apply_filters():
     cards = [
         commander,
         # Doubling Season is the more played (rank), but play counts don't decide anything
-        _card("Doubling Season", "Enchantment", "…twice that many +1/+1 counters…", rank=100, price=60, owned=1, cmc=5),
+        _card("Doubling Season", "Enchantment", "If an effect would put one or more +1/+1 counters on a permanent you "
+              "control, it puts twice that many of those counters on that permanent instead.",
+              rank=100, price=60, owned=1, cmc=5),
         _card("Hardened Scales", "Enchantment", "If one or more +1/+1 counters would be put on a creature…", rank=300,
               cmc=1),
         _card("Path to Exile", "Instant", "Exile target creature. Its controller may search their library "
@@ -51,15 +53,23 @@ def test_recommendations_rank_fit_then_efficiency_and_apply_filters():
         return {title: [r["name"] for r in rows] for title, rows, _ in synergy.recommend([commander], pool, **filters)}
 
     shown = sections()
-    assert shown["High Synergy Cards"] == ["Hardened Scales", "Doubling Season"]   # same fit, cheaper first
+    # Both pay off the counters Ghave puts out, so they work with the deck: same fit, cheaper first
+    assert shown[synergy.WORKS_TITLE] == ["Hardened Scales", "Doubling Season"]
     assert shown["Ramp"] == ["Sol Ring"]
     assert shown["Removal"] == ["Path to Exile"]      # its rules text wins over being tagged ramp
     assert shown["Lands"] == ["Command Tower"]        # basics and the commander never show up
     assert sum(shown.values(), []).count("Sol Ring") == 1
-    assert sections(owned_only=True) == {"High Synergy Cards": ["Doubling Season"]}
-    assert "Doubling Season" not in sections(max_price=20)["High Synergy Cards"]
-    assert "Hardened Scales" not in sections(in_deck={"hardened scales"})["High Synergy Cards"]
+    assert sections(owned_only=True) == {synergy.WORKS_TITLE: ["Doubling Season"]}
+    assert "Doubling Season" not in sections(max_price=20)[synergy.WORKS_TITLE]
+    assert "Hardened Scales" not in sections(in_deck={"hardened scales"})[synergy.WORKS_TITLE]
     assert "Ramp" not in sections(staples=False)
+    # Its caption says why, and working with the commander raises its synergy
+    works = next(rows for title, rows, _ in synergy.recommend([commander], pool) if title == synergy.WORKS_TITLE)
+    assert works[0]["note"] == "Pays off the +1/+1 counters Ghave puts out"
+    alone = {r["name"]: r["score"] for r in synergy.score(cards, ["counters"], tags)}
+    with_ghave = {r["name"]: r["score"] for r in synergy.score(cards, ["counters"], tags, [commander])}
+    assert with_ghave["Hardened Scales"] - alone["Hardened Scales"] == 1   # one role shared with Ghave
+    assert with_ghave["Sol Ring"] == alone["Sol Ring"]                    # nothing to do with it
 
 
 def test_imotekh_style_commanders_get_artifacts_graveyard_and_their_precon():

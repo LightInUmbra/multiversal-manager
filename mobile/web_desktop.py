@@ -7,6 +7,7 @@ import flet as ft
 
 import copy_details
 import database as db
+import interactions
 import price_changes
 import scryfall
 import theme
@@ -16,6 +17,7 @@ DOUBLE_CLICK = 0.5  # seconds between two clicks on a row that open Edit
 DETAIL_WIDTH = 300  # the selected card's panel
 PAGE_PADDING = 28
 CHANGE_DAYS = 7  # the tiles' and the table's price change
+WORKS_SHOWN = 6  # lines of a card's "Works well with" in its details
 # Name and Set share what the other columns leave (the table can't size columns itself).
 # ponytail: measured at the default font; wider content just makes the table scroll
 FIXED_COLUMNS = 560
@@ -74,6 +76,16 @@ def tile(title, value, note, value_color=None, note_color=None, small=False):
                            overflow=ft.TextOverflow.ELLIPSIS, tooltip=note or None)], spacing=2, tight=True),
         bgcolor=theme.COLORS["surface"], border=ft.Border.all(1, theme.LINE), border_radius=10,
         padding=ft.Padding.symmetric(horizontal=16, vertical=12), expand=True)
+
+
+def works_well_with(card):
+    """A card's "Works well with" lines for its details (interactions.py), or none. card: a
+    name, or a dict with name, type_line and oracle_text (a card newer than the data)."""
+    found = interactions.load().summary(card)[:WORKS_SHOWN]
+    if not found:
+        return []
+    return [ft.Text("Works well with", size=12.5, weight=ft.FontWeight.W_600, color=theme.GOLD),
+            *[ft.Text(line, size=11.5, color=theme.MUTED) for line in found]]
 
 
 class CardsPage:
@@ -225,6 +237,7 @@ class CardsPage:
             ft.Text(row["name"], font_family=theme.TITLE_FONT, size=18, weight=ft.FontWeight.W_700, color=theme.GOLD),
             *[ft.Row([ft.Text(label, width=80, size=13, color=theme.MUTED), ft.Text(value, size=13, expand=True)],
                      vertical_alignment=ft.CrossAxisAlignment.START, spacing=6) for label, value in fields],
+            *works_well_with(row["name"]),
             ft.Row([theme.button("Edit…", lambda e: self.edit(row)), theme.button("Remove", lambda e: self.remove(row)),
                     *link], spacing=8, wrap=True)]
 

@@ -23,7 +23,7 @@ import scryfall
 import synergy
 import theme
 from importer import SECTIONS
-from web_desktop import PAGE_PADDING, tile
+from web_desktop import PAGE_PADDING, tile, works_well_with
 
 KINDS ={"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
 SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
@@ -37,6 +37,9 @@ GRID_CARD = 120           # a card's width in the browsing grids: three across t
 # rules-text matches and its Scryfall tags, each staple's rules-text matches, and the lands
 # making its colors. GENERAL_PAGES: the cards its suggested creature types come from.
 GENERAL_PAGES, THEME_PAGES, TAG_PAGES, STAPLE_PAGES, LAND_PAGES = 2, 2, 1, 1, 4
+# Cards working with the deck (interactions.py) looked up besides: 4 Scryfall requests at most,
+# some left out after for being outside the commander's colors
+PARTNER_LOOKUPS = 300
 SHOWN = 12                # cards per recommendation section before Show More
 SHOW_MORE = 24
 MY_CARDS_SHOWN = 300
@@ -173,7 +176,8 @@ class DecksPage:
         self.spellbook = {}           # list id -> Commander Spellbook's reading, until the list changes
         self.searches = {}            # (Scryfall query, pages) -> its cards, for the visit
         self.prepared = {}            # card name -> the card ready for scoring
-        self.scored = {}              # (query, themes) -> synergy.score() result
+        self.scored = {}              # (query, themes, partner cards) -> synergy.score() result
+        self.card_rows = {}           # card name -> its Scryfall details (None: not found), for the visit
         self.explore = {"query": "", "type": "", "rows": [], "page": 0, "more": False, "total": 0, "for": None,
                         "sort": "Name", "colors": True}
         self.mine = {"search": "", "type": "", "legal": True}
@@ -508,6 +512,7 @@ class DecksPage:
             lines.append(ft.Text(s["statuses"][entry["id"]], size=12.5, color=theme.LOSS))
         if card["game_changer"]:
             lines.append(ft.Text("◆ Game Changer", size=12.5, color=theme.GOLD))
+        lines += works_well_with(card)
         if entry is not None:
             sections = [(sec, SECTION_TITLES[sec]) for sec in SECTIONS] if s["is_deck"] else []
             actions = [theme.button("−1", lambda e: self.change_quantity(entry, -1)),
@@ -957,21 +962,44 @@ class DecksPage:
                                           "phrases": synergy.phrases(row["oracle_text"], row["name"])}
         return self.prepared[row["name"]]
 
+    def _partner_rows(self, commanders, deck, identity):
+        """The cards interactions.py pairs with the commanders and deck (the theme searches may
+        not reach them): the PARTNER_LOOKUPS that work with it most, looked up once each, kept
+        if they're legal in Commander and in the commanders' colors."""
+        names = [name for name, _ in synergy.deck_ties(commanders, deck).most_common(PARTNER_LOOKUPS)]
+        missing = [name for name in names if name not in self.card_rows]
+        if missing:
+            found = self.busy("Looking up cards that work with the deck", lambda: scryfall.fetch_card_data(missing))
+            if found is None:
+                return []
+            for row in found:
+                self.card_rows[row["name"]] = row
+            for name in missing:
+                self.card_rows.setdefault(name, None)  # not on Scryfall: don't ask again
+        colors = set(identity)
+        return [row for name in names if (row := self.card_rows.get(name))
+                and set(row["color_identity"] or "") <= colors
+                and json.loads(row["legalities"] or "{}").get("commander") == "legal"]
+
     def _commander_sections(self, s, commanders, identity):
         rec, report = self.rec, s["report"]
         scope = self._scope(s)
-        key = (scope, tuple(rec["themes"]))
+        deck = [e["name"] for e in s["entries"]]
+        partners = self._partner_rows(commanders, deck, identity)
+        key = (scope, tuple(rec["themes"]), tuple(sorted(r["name"] for r in partners)))
         if key not in self.scored:
             pool, tags = self._commander_pool(scope, identity, rec["themes"])
             if pool is None:
                 return None
+            found = {r["name"] for r in pool}
+            pool += [self._prepared(r) for r in partners if r["name"] not in found]
             self.scored[key] = synergy.score(pool, rec["themes"], tags, commanders)
         owned = s["owned"]
         scored = [{**r, "owned": owned.get(r["name"].lower(), 0)} for r in self.scored[key]] if rec["owned"] else self.scored[key]
         return synergy.recommend(
-            commanders, scored, in_deck=[e["name"] for e in s["entries"]], owned_only=rec["owned"],
+            commanders, scored, in_deck=deck, owned_only=rec["owned"],
             max_price=PRICES[rec["price"]], staples=rec["staples"], bracket=s["info"]["bracket"], precon_title="",
-            game_changers=len(report.game_changers) if report else 0, more=dict(rec["shown"]))
+            game_changers=len(report.game_changers) if report else 0, more=dict(rec["shown"]), deck=deck)
 
     def _theme_picker(self, commanders):
         # Suggested themes as chips, every other theme (and tribe) under More themes, like the desktop

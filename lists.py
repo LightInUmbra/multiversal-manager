@@ -29,6 +29,7 @@ import brackets
 import database as db
 import finance
 import formats
+import interactions
 import scryfall
 from card_browser import CardBrowser, PrintingDialog
 from card_image import CardImage
@@ -51,6 +52,7 @@ MUTED = QColor("gray")
 PRICE_MAX_AGE = timedelta(hours=24)
 CARD_DB_MAX_AGE = timedelta(days=7)  # the deck builder re-checks Scryfall's bulk data weekly
 RESULTS_SHOWN = 600
+WORKS_SHOWN = 6  # lines of a card's "Works well with" (interactions.py) in its details
 
 
 def _plural(card_type, n):
@@ -190,6 +192,9 @@ class ListsWindow(QWidget):
         self.detail_text.setMaximumHeight(170)
         self.detail_info = QLabel()
         self.detail_info.setWordWrap(True)
+        self.detail_works = QLabel()  # "Works well with" (interactions.py)
+        self.detail_works.setWordWrap(True)
+        self.detail_works.setStyleSheet("color: palette(placeholder-text);")
         self.minus_button = QPushButton("−1")
         self.minus_button.setToolTip("Take one copy out of this list")
         self.minus_button.clicked.connect(lambda: self.change_selected(-1))
@@ -207,6 +212,7 @@ class ListsWindow(QWidget):
         layout.addWidget(self.detail_type)
         layout.addWidget(self.detail_text)
         layout.addWidget(self.detail_info)
+        layout.addWidget(self.detail_works)
         layout.addLayout(buttons)
         return panel
 
@@ -643,7 +649,7 @@ class ListsWindow(QWidget):
             button.setEnabled(row is not None and self._list is not None)
         if row is None:
             self.card_image.clear_image("Select a card")
-            for label in (self.detail_name, self.detail_type, self.detail_info):
+            for label in (self.detail_name, self.detail_type, self.detail_info, self.detail_works):
                 label.setText("")
             self.detail_text.setPlainText("")
             return
@@ -665,6 +671,8 @@ class ListsWindow(QWidget):
         if self.is_commander_deck() and row["game_changer"]:
             info.append("Game Changer: none in Brackets 1–2, up to three in Bracket 3")
         self.detail_info.setText("\n".join(info))
+        works = interactions.load().summary(row)[:WORKS_SHOWN]
+        self.detail_works.setText("Works well with:\n" + "\n".join(works) if works else "")
 
     def on_deck_selection(self):
         entries = self.selected_entries()

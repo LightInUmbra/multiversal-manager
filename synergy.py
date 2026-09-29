@@ -21,6 +21,7 @@ import requests
 
 import brackets
 import database as db
+import interactions
 import scryfall
 
 
@@ -145,11 +146,14 @@ TYPE_SECTIONS = [("Creature", "Creatures"), ("Instant", "Instants"), ("Sorcery",
                  ("Artifact", "Artifacts"), ("Enchantment", "Enchantments"), ("Planeswalker", "Planeswalkers"),
                  ("Battle", "Battles"), ("Land", "Lands")]
 
-HIGH_SYNERGY_SHOWN, STAPLES_SHOWN, TOP_SHOWN, TYPE_SHOWN, LANDS_SHOWN = 20, 12, 30, 30, 30
+WORKS_SHOWN, HIGH_SYNERGY_SHOWN, STAPLES_SHOWN, TOP_SHOWN, TYPE_SHOWN, LANDS_SHOWN = 20, 20, 12, 30, 30, 30
+WORKS_TITLE = "Works With Your Deck"
 SHOW_MORE = 30      # cards added by a section's Show More
 PRECON_POINTS = 3   # cards from the commander's own precon were designed to go with it
 ECHO_POINTS = 4     # sharing the commander's own wording, at most
 RULING_POINTS = 1   # a theme found only in a card's rulings: they clarify, so they count less than its text
+INTERACTION_POINTS = 3  # working with the commander (interactions.py: a ruling, or a role they share), at most
+COMMANDER_WEIGHT = 2    # in Works With Your Deck, working with the commander counts this many times a deck card
 _ENTERS_TAPPED = re.compile(r"enters(?: the battlefield)? tapped(?!\s+unless)", re.IGNORECASE)
 
 
@@ -348,11 +352,13 @@ def score(cards, theme_keys, tags, commanders=()):
     ("score", and "synergy" 0-100), "efficiency" (0-1), "type", "staple" (a STAPLES
     title, or None) and "precon" (in the commander's precon; tags["precon"] from
     load()). A card's "rulings" (text, optional) count when its rules text doesn't
-    match a theme. The slow part of the recommendations, so it's worked out once per
-    choice of themes, not per filter."""
+    match a theme, and working with the commanders (interactions.py) counts too. The slow
+    part of the recommendations, so it's worked out once per choice of themes, not per filter."""
     matchers = [(re.compile(t.cards, re.IGNORECASE), [tags.get(tag, set()) for tag in t.tags], t.types)
                 for t in map(theme, theme_keys)]
-    best = 5 * len(matchers) + ECHO_POINTS  # rules text (3) + a tag (2) for every theme, plus the commander's wording
+    # Rules text (3) + a tag (2) for every theme, plus the commander's wording and working with it
+    best = 5 * len(matchers) + ECHO_POINTS + (INTERACTION_POINTS if commanders else 0)
+    engine = interactions.load()
     precon = tags.get("precon", set())
     echoes = _echoes(cards, commanders)
     identity = identity_of(commanders)
@@ -372,6 +378,8 @@ def score(cards, theme_keys, tags, commanders=()):
             points += 1 if any(t in (card["type_line"] or "") for t in types) else 0
         points += PRECON_POINTS if card["name"] in precon else 0
         points += round(ECHO_POINTS * echoes.get(card["name"], 0), 1)
+        works = sum(weight for c in commanders for weight, _ in engine.reasons(card, c))
+        points += min(INTERACTION_POINTS, works)
         # Rules text decides which staple a card is (Path to Exile is removal, even though
         # it's tagged ramp); tags only place cards whose text didn't match any
         kind = _front_type(card)
@@ -394,15 +402,30 @@ def _off_color_land(card, identity):
     return card["type"] == "Land" and bool(colors) and not colors & set(identity)
 
 
+def deck_ties(commanders, deck):
+    """Counter {card: how much it works with the deck}: interactions.py's partners of each of
+    the deck's cards (names), a commander's (dicts) counting COMMANDER_WEIGHT times."""
+    engine = interactions.load()
+    ties = Counter()
+    for name in deck:
+        ties.update(engine.partners(name))
+    for commander in commanders:
+        for other, weight in engine.partners(commander).items():
+            ties[other] += COMMANDER_WEIGHT * weight
+    return ties
+
+
 def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, staples=True,
-              precon_title="From the Precon", more=None, bracket=None, game_changers=0):
-    """[(section title, rows, how many more there are)]: the commander's precon, High
-    Synergy Cards, the staples (if staples), Top Cards (the next best fits), then each
-    card type, each ranked by fit, then efficiency. pool is from
-    score(); each row also gets a "note" (a caption line). more ({title: n}) shows n
-    extra cards in a section. Each card shows up once, and the commanders, basic
-    lands and in_deck names are left out, as are cards that don't fit the Commander
-    bracket the deck aims for (bracket, with game_changers already in the deck)."""
+              precon_title="From the Precon", more=None, bracket=None, game_changers=0, deck=()):
+    """[(section title, rows, how many more there are)]: Works With Your Deck (the cards
+    interactions.py pairs with the commanders and deck, the names of the deck's cards),
+    the commander's precon, High Synergy Cards, the staples (if staples), Top Cards (the
+    next best fits), then each card type, each ranked by fit, then efficiency. pool is from
+    score(); each row also gets a "note" (a caption line: why it works with the deck, or
+    its synergy). more ({title: n}) shows n extra cards in a section. Each card shows up
+    once, and the commanders, basic lands and in_deck names are left out, as are cards that
+    don't fit the Commander bracket the deck aims for (bracket, with game_changers already
+    in the deck)."""
     skip = {name.lower() for name in in_deck} | {c["name"].lower() for c in commanders}
     identity = identity_of(commanders)
     pool = [card for card in pool
@@ -413,22 +436,40 @@ def recommend(commanders, pool, in_deck=(), owned_only=False, max_price=None, st
     used = set()
     sections = []
 
+    engine = interactions.load()
+
     def note(row):
         game_changer = " · Game Changer" if row.get("game_changer") else ""
         return f"{row['synergy']}% synergy{game_changer}"
 
-    def add(title, rows, key, limit):
+    def why(row):
+        # Its strongest reason to be in the deck: with a commander first, then any deck card
+        for other in [*commanders, *deck]:
+            found = engine.reasons(row, other)
+            if found:
+                reason = found[0][1]
+                return reason[0].upper() + reason[1:] + (" · Game Changer" if row.get("game_changer") else "")
+        return note(row)
+
+    def add(title, rows, key, limit, caption=note):
         rows = sorted((r for r in rows if r["name"] not in used), key=key, reverse=True)
         chosen = rows[:limit + more.get(title, 0)]
         used.update(r["name"] for r in chosen)
-        sections.append((title, [{**r, "note": note(r)} for r in chosen], len(rows) - len(chosen)))
+        sections.append((title, [{**r, "note": caption(r)} for r in chosen], len(rows) - len(chosen)))
 
     def fit(row):
         # How well it fits, then how efficient it is: nothing about how often it's played
         return row["score"], row["efficiency"]
 
-    # The precon first: it was built for this commander, and High Synergy then adds to it
+    # The precon first: it was built for this commander
     add(precon_title, [r for r in pool if r["precon"]], fit, len(pool))
+    # Then what works with the deck as it stands
+    ties = deck_ties(commanders, deck)
+    for row in pool:
+        if row["name"] not in engine.roles:  # newer than the data: paired up by its own text
+            ties[row["name"]] += sum(COMMANDER_WEIGHT * w for c in commanders for w, _ in engine.reasons(row, c))
+            ties[row["name"]] += sum(w for name in deck for w, _ in engine.reasons(row, name))
+    add(WORKS_TITLE, [r for r in pool if ties[r["name"]]], lambda r: (ties[r["name"]], *fit(r)), WORKS_SHOWN, why)
     add("High Synergy Cards", [r for r in pool if r["score"] >= 3], fit, HIGH_SYNERGY_SHOWN)
     if staples:
         for title in STAPLES:

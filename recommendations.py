@@ -1,8 +1,9 @@
 """
 The deck builder's Recommended tab: a page of cards for the deck's commander.
 The commander up top, with theme buttons for the direction you want to take the deck
-and a few filters, then sections of card images: High Synergy Cards, the staples,
-then each card type. How cards are picked is in synergy.py.
+and a few filters, then sections of card images: Works With Your Deck, High Synergy
+Cards, the staples, then each card type. How cards are picked is in synergy.py (and
+which cards work together, in interactions.py).
 """
 
 # Imports
@@ -310,8 +311,9 @@ class RecommendationsPanel(QWidget):
         self.commander_image.set_image_url(commanders[0]["image_url"])
         self.commander_name.setText(" + ".join(names))
         self.commander_info.setText(f"Color identity: {identity or 'Colorless'}  ·  Picked from each card's "
-                                    "rules text and Scryfall's card tags, ranked by how well they fit the "
-                                    "themes you choose, then by how much they're played in Commander.")
+                                    "rules text, rulings and Scryfall's card tags, and what it does with your "
+                                    "commander and deck, ranked by how well it fits the themes you choose, then "
+                                    "by how efficient it is.")
         self._suggested = synergy.suggest_themes(commanders, known_creature_types())
         saved = self.settings.value(f"deck_themes/{deck_id}")
         self._themes = [k for k in saved.split(",") if k] if isinstance(saved, str) else self._suggested[:2]
@@ -437,7 +439,7 @@ class RecommendationsPanel(QWidget):
             staples=self.staples_check.isChecked(),
             # The Collector's Edition of a precon has the same cards, so the shortest name does
             precon_title=f"From {min(self._precons, key=len)}" if self._precons else "From the Precon",
-            more=self._more, bracket=self._bracket, game_changers=self._game_changers)
+            more=self._more, bracket=self._bracket, game_changers=self._game_changers, deck=self._in_deck)
 
         while self.page_layout.count():
             item = self.page_layout.takeAt(0)
