@@ -7,9 +7,9 @@ app keeps no collection of its own between visits; signing in pulls it from sync
 
     multiversal-manager\\Scripts\\python.exe mobile\\build_web.py
 
-BASE_URL is the folder the site is served from: "multiversal-manager" for
-https://lightinumbra.github.io/multiversal-manager/, "/" (the default) to try it locally with
-`python -m http.server -d mobile/build/web`.
+Every release publishes it at https://multiversalmanager.app (.github/workflows/release.yml).
+BASE_URL is the folder the site is served from: "/" (the default) for that domain, and to try
+it locally with `python -m http.server -d mobile/build/web`.
 """
 
 # Imports

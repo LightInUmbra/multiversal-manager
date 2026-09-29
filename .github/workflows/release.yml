@@ -1,6 +1,7 @@
 # Pushing a version tag (git tag v1.1.0 && git push origin v1.1.0) tests the code, rebuilds
 # the interaction data, builds the installer and the portable zip on Windows, and publishes
-# them as a GitHub Release, then builds the Android app and adds its APK to that release
+# them as a GitHub Release, then builds the Android app and adds its APK to that release,
+# and builds the website and publishes it on GitHub Pages (https://multiversalmanager.app)
 name: Release
 
 on:
@@ -121,3 +122,82 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release upload "$GITHUB_REF_NAME" mobile/build/Multiversal-Manager-*.apk
+
+  # The website, built from the same code, for GitHub Pages at https://multiversalmanager.app
+  website:
+    needs: release
+    runs-on: windows-latest   # like the Android build, whose Flutter download it shares
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+          cache: pip
+
+      # The interaction data the Windows build made
+      - uses: actions/download-artifact@v4
+        with:
+          name: interactions
+
+      - uses: actions/cache@v4
+        with:
+          path: ~/flutter
+          key: flutter-${{ runner.os }}-flet-1.0.1
+
+      # The rules from the last release, so only what changed downloads again (set notes take a while)
+      - uses: actions/cache@v4
+        with:
+          path: rules
+          key: rules-${{ github.run_id }}
+          restore-keys: rules-
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt "flet==1.0.1" "flet-cli==1.0.1"
+
+      # Browsers can't download the rules from Wizards of the Coast, so the website comes with
+      # them (mobile/build_web.py bundles this folder); a runner isn't a browser
+      - name: Download the rules
+        shell: bash
+        env:
+          PYTHONIOENCODING: utf-8
+        run: python -c "import database as db, rules; db.create_table(); changed, errors = rules.update(); print('Changed:', changed, 'Errors:', errors)"
+
+      - name: Build the website
+        shell: bash
+        env:
+          QT_QPA_PLATFORM: offscreen
+          PYTHONIOENCODING: utf-8
+        run: |
+          export APP_VERSION="${GITHUB_REF_NAME#v}"
+          python mobile/build_web.py
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: website
+          path: mobile/build/web
+
+  # Publishing it (on Linux, where GitHub's Pages actions run)
+  pages:
+    needs: website
+    runs-on: ubuntu-latest
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: website
+          path: site
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - id: deploy
+        uses: actions/deploy-pages@v4

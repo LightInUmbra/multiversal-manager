@@ -6,7 +6,7 @@
 
 Moxfield, Manabox, and Archidekt are all amazing tools that have shaped the way we view card prices, kept track of our collections and our decks. They do so much, but you know what they don't have (or don't have much of)? Interconnectivity. That's why I developed this: The Multiversal Manager! It's supposed to be a tool like those three, except by offering more! It offers a deck builder, finance/market tracker, and more features to come! The biggest thing of it all though? The convenience. Moxfield and Archidekt are available on the web, which is great when working on a computer; it makes a difference for mobile users though. ManaBox exists, but when you'd like to edit something, it HAS to be done via the app; not even the link can save you. That's where my tool comes in - It bridges that gap so not only do you have access to your collection and price tracking system at anytime, but you have it in your pocket, at home, and anywhere you can access a computer!
 
-It's a desktop app and an Android app that share one collection, with a website in development that runs the same app in your browser (more on that in [The Multiverse](#the-multiverse)).
+It's a desktop app and an Android app that share one collection, with a website at [multiversalmanager.app](https://multiversalmanager.app) that runs the same app in your browser (more on that in [The Multiverse](#the-multiverse)).
 
 Everything it recommends is worked out from the cards themselves (their rules text, official rulings and what they do together), never from play-count sites like EDHREC.
 
@@ -100,7 +100,7 @@ The bigger idea is a set of connected apps that all share the same collection:
 |---|---|
 | **Desktop** | Available! |
 | **Android** | Available; collection and prices, Deck Builder, the rules judge, and a camera card scanner |
-| **Web** | In development; the desktop's layout in your browser (collection, Deck Builder with Commander recommendations, rules), signed in to the same account |
+| **Web** | [multiversalmanager.app](https://multiversalmanager.app), updated with every release; the desktop's layout in your browser (collection, Deck Builder with Commander recommendations, rules), signed in to the same account |
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.
 
@@ -188,7 +188,7 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. Then it builds the Android app and adds its APK to the same release. The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe` and `Multiversal-Manager-1.2.0.apk`.
+GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. Then it builds the Android app and adds its APK to the same release, and builds the website (downloading the newest rules for it first) and publishes it on GitHub Pages at [multiversalmanager.app](https://multiversalmanager.app). The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe` and `Multiversal-Manager-1.2.0.apk`.
 
 The Android app is signed with a release key that isn't in the repository. To build it yourself, run `python mobile/build_apk.py` (see the top of that file); without the key your APK gets your computer's own debug key, which can't update a copy installed from the Releases page.
 
