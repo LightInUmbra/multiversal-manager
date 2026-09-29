@@ -61,9 +61,16 @@ CR_FORMATS = {"Commander": "903", "Two-Headed Giant": "810", "Planechase": "901"
 RULE_ID = re.compile(r"\b(\d{3}(?:\.\d+[a-z]?)?)\b")
 
 
+# The website's copy of the rules (mobile/build_web.py puts it next to the code): browsers
+# can't download them from Wizards of the Coast, whose sites don't allow it, so it reads this
+BUNDLED = Path(__file__).resolve().parent / "rules_bundle"
+
+
 def rules_dir():
-    # Next to the collection, so the whole app folder stays portable
-    return Path(db.DB_NAME).parent / "rules"
+    # Next to the collection, so the whole app folder stays portable; the bundled copy until
+    # there's one of its own (on the website, always)
+    own = Path(db.DB_NAME).parent / "rules"
+    return BUNDLED if not (own / "cr.txt").exists() and (BUNDLED / "cr.txt").exists() else own
 
 
 def _manifest_path():

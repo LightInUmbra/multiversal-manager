@@ -57,6 +57,24 @@ def test_combos_from_commander_spellbook():
     assert len(report.broken(2)) == 2
 
 
+def test_a_commanders_combos_in_its_colors_and_the_brackets_they_fit():
+    def variant(id, uses, identity, tag="S"):
+        return {"id": id, "uses": [{"card": {"name": n}} for n in uses], "identity": identity, "bracketTag": tag,
+                "produces": [{"feature": {"name": "Infinite damage"}}, {"feature": {"name": "Infinite ETB"}}],
+                "easyPrerequisites": "All permanents on the battlefield.", "notablePrerequisites": "",
+                "description": "1. Activate Kiki-Jiki.\n2. Repeat."}
+    combos = brackets.read_combos([variant("1-2", ["Kiki-Jiki", "Zealous Conscripts"], "R", "R"),
+                                   variant("3-4", ["Kiki-Jiki", "Sol Ring", "Goblin Bombardment"], "C"),
+                                   variant("5-6", ["Kiki-Jiki", "Pestermite"], "UR")], "R")
+    assert [c.id for c in combos] == ["1-2", "3-4"]            # the blue one is outside Kiki-Jiki's colors
+    fast, big = combos
+    assert fast.results == "Infinite damage, Infinite ETB" and fast.steps.startswith("1. Activate")
+    assert fast.prerequisites == "All permanents on the battlefield." and fast.url().endswith("/combo/1-2/")
+    # Two-card combos: none in Brackets 1-2, early ones not in 3; three cards fit anywhere
+    assert [fast.fits(b) for b in (None, 2, 3, 4)] == [True, False, False, True]
+    assert all(big.fits(b) for b in (1, 2, 3))
+
+
 def test_recommendations_leave_out_what_the_bracket_doesnt_allow():
     assert not brackets.card_allowed(_card("Rhystic Study", game_changer=1), 2, 3)
     assert brackets.card_allowed(_card("Rhystic Study", game_changer=1), 3, 1)

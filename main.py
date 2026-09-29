@@ -6,7 +6,7 @@ import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QItemSelectionModel, QTimer, QUrl
+from PySide6.QtCore import Qt, QItemSelectionModel, QtMsgType, QTimer, QUrl, qInstallMessageHandler
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QIcon, QKeySequence
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QFormLayout,
@@ -957,7 +957,14 @@ def _install_crash_log():
         QMessageBox.warning(None, APP_NAME, f"Something went wrong:\n\n{value}\n\n"
                             f"The details were saved to {log_path.name} next to your collection.")
 
+    def qt_message(kind, context, message):
+        # Qt's own warnings and errors, which otherwise only reach a terminal nobody's watching
+        if kind != QtMsgType.QtDebugMsg:
+            log.write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S} Qt {kind.name}: {message}\n")
+
     sys.excepthook = report
+    qInstallMessageHandler(qt_message)
+    lists.DIAGNOSTICS_LOG = log  # the Deck Builder notes what hid it (lists.ListsWindow.hideEvent)
 
 
 def main():

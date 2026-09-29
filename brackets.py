@@ -22,6 +22,8 @@ import requests
 import scryfall
 
 SPELLBOOK = "https://backend.commanderspellbook.com/estimate-bracket"
+SPELLBOOK_SEARCH = "https://backend.commanderspellbook.com/variants/"
+COMBO_PAGE, COMBO_PAGES = 100, 10  # a commander's combos: up to 1,000
 FEW_EXTRA_TURNS = 2  # ponytail: "low quantities" isn't a number; 2 is a guess, tune if it flags fair decks
 
 
@@ -144,6 +146,18 @@ class Combo:
     cards: tuple       # card names
     results: str       # what it makes ("Infinite damage, …")
     early: bool        # cheap and fast, or a lock / extra-turn loop: only Bracket 4+
+    id: str = ""             # Commander Spellbook's (commander_combos only, like the rest)
+    prerequisites: str = ""  # what has to be in place first
+    steps: str = ""          # how it goes
+
+    def fits(self, target):
+        """Whether a deck aiming for bracket target (None: any) may have it: two-card combos
+        from Bracket 3, early ones from Bracket 4. Bigger combos fit every bracket."""
+        two_card = len(self.cards) == 2
+        return target is None or not two_card or target >= 4 or (target == 3 and not self.early)
+
+    def url(self):
+        return f"https://commanderspellbook.com/combo/{self.id}/"
 
 
 @dataclass
@@ -229,6 +243,42 @@ def read_spellbook(data):
         combos.append(Combo(tuple(u["card"]["name"] for u in variant["uses"]), results, early))
     return {"game_changers": names("gameChanger"), "mass_land_denial": names("massLandDenial"),
             "extra_turns": names("extraTurn"), "combos": combos}
+
+
+def commander_combos(commanders, identity):
+    """Every Commander Spellbook combo using one of the commanders (names) within their colors
+    (identity like "UR", "" for colorless): [Combo], fewest cards first (Spellbook's own order
+    is by how often decks play them, EDHREC's numbers, which this app doesn't use). Up to
+    COMBO_PAGES pages per commander; raises OfflineError or requests errors."""
+    scryfall._require_online()
+    found = {}
+    for name in commanders:
+        url, params = SPELLBOOK_SEARCH, {"q": f'card:"{name}"', "limit": COMBO_PAGE}
+        for _ in range(COMBO_PAGES):
+            response = requests.get(url, params=params, headers=scryfall.HEADERS, timeout=60)
+            response.raise_for_status()
+            data = response.json()
+            for combo in read_combos(data["results"], identity):
+                found.setdefault(combo.id, combo)
+            url, params = data.get("next"), None  # the next page's address has the query in it
+            if not url:
+                break
+    return sorted(found.values(), key=lambda c: (len(c.cards), c.cards))
+
+
+def read_combos(variants, identity):
+    # commander_combos' Combos from Spellbook's variants, leaving out those outside identity
+    colors = set(identity)
+    combos = []
+    for variant in variants:
+        if not set(variant.get("identity") or "") - {"C"} <= colors:
+            continue
+        prerequisites = "\n".join(filter(None, [variant.get("easyPrerequisites"), variant.get("notablePrerequisites")]))
+        combos.append(Combo(tuple(use["card"]["name"] for use in variant["uses"]),
+                            ", ".join(p["feature"]["name"] for p in variant["produces"]),
+                            variant.get("bracketTag") == "R", str(variant["id"]),
+                            prerequisites.strip(), (variant.get("description") or "").strip()))
+    return combos
 
 
 def card_allowed(card, target, game_changers_left):

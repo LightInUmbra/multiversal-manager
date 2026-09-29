@@ -3,17 +3,20 @@ The deck builder's Recommended tab: a page of cards for the deck's commander.
 The commander up top, with theme buttons for the direction you want to take the deck
 and a few filters, then sections of card images: Works With Your Deck, High Synergy
 Cards, the staples, then each card type. How cards are picked is in synergy.py (and
-which cards work together, in interactions.py).
+which cards work together, in interactions.py). Available Combos… opens every Commander
+Spellbook combo with the commander (CombosDialog).
 """
 
 # Imports
+import html
 import math
 
-from PySide6.QtCore import Qt, QPoint, QRect, QSize, QTimer, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtCore import Qt, QPoint, QRect, QSize, QTimer, QUrl, Signal
+from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QToolButton, QMenu, QCheckBox,
-    QDoubleSpinBox, QScrollArea, QProgressBar, QSizePolicy, QInputDialog, QLayout,
+    QDoubleSpinBox, QScrollArea, QProgressBar, QSizePolicy, QInputDialog, QLayout, QDialog,
+    QSplitter, QTextBrowser, QTreeWidget, QTreeWidgetItem,
 )
 
 import background
@@ -115,6 +118,97 @@ def _load(identity, theme_keys, commanders, tags, cards, fetch, progress=None):
     cards, found, missing = synergy.load(identity, tags, names, cards, fetch, progress)
     pool = synergy.score(cards, theme_keys, found, commanders)
     return (identity, theme_keys, names), cards, pool, missing, found["precon-decks"]
+
+
+class CombosDialog(QDialog):
+    """Available Combos: every Commander Spellbook combo with the deck's commander, within its
+    colors, the ones closest to done first (fewest cards to add, then fewest cards). Cards
+    in the deck are marked ✓ and ones you own •; selecting a combo shows how it goes, and
+    double-clicking opens it on Commander Spellbook."""
+
+    def __init__(self, commanders, identity, deck, bracket, parent=None):
+        super().__init__(parent)
+        self._names = [c["name"] for c in commanders]
+        self._deck, self._bracket, self._owned = set(deck), bracket, db.owned_by_name()
+        self._combos = []
+        self.setWindowTitle(f"Available Combos — {' + '.join(self._names)}")
+        self.resize(1000, 680)
+        self.status = QLabel("Looking up combos on Commander Spellbook…")
+        self.status.setWordWrap(True)
+        self.fits_check = QCheckBox(f"Only combos Bracket {bracket} allows" if bracket else "")
+        self.fits_check.setVisible(bool(bracket))
+        self.fits_check.toggled.connect(lambda _: self._fill())
+        self.table = QTreeWidget()
+        self.table.setHeaderLabels(["Cards", "What it does", "To add", "Allowed in"])
+        self.table.setRootIsDecorated(False)
+        self.table.setColumnWidth(0, 420)
+        self.table.setColumnWidth(1, 330)
+        self.table.currentItemChanged.connect(lambda item, _: self._show(item))
+        self.table.itemDoubleClicked.connect(lambda item, _: QDesktopServices.openUrl(QUrl(self._combo(item).url())))
+        self.detail = QTextBrowser()
+        self.detail.setOpenExternalLinks(True)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        splitter.addWidget(self.table)
+        splitter.addWidget(self.detail)
+        splitter.setSizes([420, 220])
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.status)
+        layout.addWidget(self.fits_check)
+        layout.addWidget(splitter, stretch=1)
+        background.run(brackets.commander_combos, self._names, identity, on_success=self._loaded,
+                       on_error=lambda message: self.status.setText(f"Couldn't reach Commander Spellbook: {message}"))
+
+    def _mark(self, name):
+        return ("✓ " if name in self._deck else "• " if self._owned.get(name.lower()) else "") + name
+
+    def _missing(self, combo):
+        return [name for name in combo.cards if name not in self._deck]
+
+    @staticmethod
+    def _allowed(combo):
+        # The lowest bracket that allows it
+        return "Any bracket" if combo.fits(1) else "Bracket 3+" if combo.fits(3) else "Bracket 4+"
+
+    @staticmethod
+    def _combo(item):
+        return item.data(0, Qt.ItemDataRole.UserRole)
+
+    def _loaded(self, combos):
+        self._combos = sorted(combos, key=lambda c: (len(self._missing(c)), len(c.cards)))
+        self._fill()
+
+    def _fill(self):
+        shown = [c for c in self._combos if not self.fits_check.isChecked() or c.fits(self._bracket)]
+        self.table.clear()
+        for combo in shown:
+            missing = len(self._missing(combo))
+            item = QTreeWidgetItem(["  +  ".join(map(self._mark, combo.cards)), combo.results,
+                                    str(missing) if missing else "Complete", self._allowed(combo)])
+            item.setData(0, Qt.ItemDataRole.UserRole, combo)
+            item.setToolTip(0, "\n".join(map(self._mark, combo.cards)))
+            item.setToolTip(1, combo.results)
+            self.table.addTopLevelItem(item)
+        count = f"{len(shown):,} combo{'s' if len(shown) != 1 else ''}"
+        self.status.setText(f"{count} with {' or '.join(self._names)} in its colors, from Commander Spellbook "
+                            "(commanderspellbook.com), the closest to done first. ✓ in the deck, • in your "
+                            "collection. Double-click one to open it on Commander Spellbook."
+                            if self._combos else "Commander Spellbook has no combos with this commander in its colors.")
+        if shown:
+            self.table.setCurrentItem(self.table.topLevelItem(0))
+
+    def _show(self, item):
+        if item is None:
+            self.detail.clear()
+            return
+        combo = self._combo(item)
+        cards = "<br>".join(html.escape(self._mark(name)) for name in combo.cards)
+        steps = "".join(f"<li>{html.escape(line.lstrip('0123456789. '))}</li>" for line in combo.steps.splitlines() if line.strip())
+        self.detail.setHtml(
+            f"<p><b>{html.escape(combo.results)}</b> · {self._allowed(combo)}</p><p>{cards}</p>"
+            + (f"<p><b>Before it starts</b><br>{html.escape(combo.prerequisites).replace(chr(10), '<br>')}</p>"
+               if combo.prerequisites else "")
+            + (f"<p><b>How it goes</b></p><ol>{steps}</ol>" if steps else "")
+            + f"<p><a href='{combo.url()}'>Open on Commander Spellbook</a></p>")
 
 
 class _Section(QWidget):
@@ -236,8 +330,11 @@ class RecommendationsPanel(QWidget):
         price_layout.setContentsMargins(0, 0, 0, 0)
         price_layout.addWidget(QLabel("Max price:"))
         price_layout.addWidget(self.price_input)
+        self.combos_button = QPushButton("Available Combos…")
+        self.combos_button.setToolTip("Every combo with this commander, from Commander Spellbook")
+        self.combos_button.clicked.connect(self.show_combos)
         filters = _FlowLayout(spacing=12)
-        for widget in (self.owned_check, price, self.hide_check, self.staples_check):
+        for widget in (self.owned_check, price, self.hide_check, self.staples_check, self.combos_button):
             filters.addWidget(widget)
 
         right = QVBoxLayout()
@@ -319,6 +416,9 @@ class RecommendationsPanel(QWidget):
         self._themes = [k for k in saved.split(",") if k] if isinstance(saved, str) else self._suggested[:2]
         self._build_themes()
         self.load()
+
+    def show_combos(self):
+        CombosDialog(self._commanders, self._identity or "", self._in_deck, self._bracket, self).show()
 
     def invalidate(self):
         # The card database changed: reload everything next time

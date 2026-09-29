@@ -116,6 +116,10 @@ class Rules:
 
         if chapter:
             body.append(ft.TextButton(f"Open chapter {chapter.number}", on_click=whole_chapter))
+        self._sheet(body)
+
+    def _sheet(self, body):
+        # A rule over the page: a bottom sheet on the phone
         self.page.show_dialog(ft.BottomSheet(ft.Container(ft.Column(body, scroll=ft.ScrollMode.AUTO, tight=True),
                                                           padding=16), scrollable=True, show_drag_handle=True))
 
@@ -221,6 +225,10 @@ class Rules:
             self.open(lambda: self.answer_page(found))
 
     def answer_page(self, found):
+        self.show("Answer", self.answer_controls(found))
+
+    def answer_controls(self, found):
+        # An ask.look_up answer: the verdict up top, then what's behind it, each part folded away
         kind, worked, matches = found.kind, found.worked, found.matches
         body, rule_refs = [], []
         if kind == "verified":
@@ -276,10 +284,10 @@ class Rules:
         tiles = [ft.ExpansionTile(title=ft.Text(title), controls=[ft.Container(ft.Column(items, spacing=8),
                                                                               padding=ft.Padding.only(bottom=8))],
                                   controls_padding=ft.Padding.symmetric(horizontal=12)) for title, items in sections]
-        self.show("Answer", [ft.Text(found.question, size=16, weight=ft.FontWeight.BOLD), answer, *tiles,
-                             ft.Text("Verified rulings are checked answers. Everything else is the official text, "
-                                     "gathered for your question: read it to decide, or ask a judge at a "
-                                     "sanctioned event.", size=12, color=MUTED)])
+        return [ft.Text(found.question, size=16, weight=ft.FontWeight.BOLD), answer, *tiles,
+                ft.Text("Verified rulings are checked answers. Everything else is the official text, "
+                        "gathered for your question: read it to decide, or ask a judge at a "
+                        "sanctioned event.", size=12, color=MUTED)]
 
     def _step(self, step):
         # A combat step starts with a bold title ("<b>First strike damage</b> …")

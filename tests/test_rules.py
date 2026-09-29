@@ -194,3 +194,16 @@ def test_a_question_asked_the_other_way_round_is_not_its_answer():
     assert entry["answer"] == "Yes" and score < 0.45  # too weak to be given as the answer
     (score, _), = rules.similar_interactions("Can a creature with reach block a creature with flying?", library)
     assert score == 1.0
+
+
+def test_the_website_reads_its_bundled_rules_until_it_has_its_own(temp_db, tmp_path, monkeypatch):
+    from pathlib import Path
+    bundle = tmp_path / "rules_bundle"
+    bundle.mkdir()
+    (bundle / "cr.txt").write_text(CR, encoding="utf-8")
+    monkeypatch.setattr(rules, "BUNDLED", bundle)
+    assert rules.rules_dir() == bundle and rules.text("cr") == CR   # nothing downloaded: the bundle
+    own = Path(temp_db.DB_NAME).parent / "rules"
+    own.mkdir()
+    (own / "cr.txt").write_text("downloaded", encoding="utf-8")
+    assert rules.rules_dir() == own and rules.text("cr") == "downloaded"

@@ -4,7 +4,7 @@ import synergy
 def _card(name, type_line, text, rank=None, price=1.0, owned=0, identity="", cmc=0, rulings=""):
     return {"name": name, "type_line": type_line, "oracle_text": text, "text": f"{type_line}\n{text}",
             "edhrec_rank": rank, "price": price, "owned": owned, "color_identity": identity, "cmc": cmc,
-            "rulings": rulings}
+            "rulings": rulings, "game_changer": 0}
 
 
 def test_themes_follow_what_the_commander_cares_about():

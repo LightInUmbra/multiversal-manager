@@ -210,6 +210,7 @@ class DecksPage:
         self.prepared = {}            # card name -> the card ready for scoring
         self.scored = {}              # (query, themes, partner cards) -> synergy.score() result
         self.card_rows = {}           # card name -> its Scryfall details (None: not found), for the visit
+        self.combos = {}              # commander names -> their Commander Spellbook combos, for the visit
         self.explore = {"query": "", "type": "", "rows": [], "page": 0, "more": False, "total": 0, "for": None,
                         "sort": "Name", "colors": True}
         self.mine = {"search": "", "type": "", "legal": True}
@@ -1093,7 +1094,8 @@ class DecksPage:
 
         filters = [ft.Checkbox(label="Cards I own", value=rec["owned"], on_change=lambda e: self._rec(owned=e.control.value)),
                    ft.Checkbox(label="Staples", value=rec["staples"], on_change=lambda e: self._rec(staples=e.control.value)),
-                   _dropdown(rec["price"], [(k, k) for k in PRICES], lambda e: self._rec(price=e.control.value), 130)]
+                   _dropdown(rec["price"], [(k, k) for k in PRICES], lambda e: self._rec(price=e.control.value), 130),
+                   theme.button("Available combos", lambda e: self.show_combos(s, commanders, identity))]
         controls = [ft.Text(f"Build around (color identity {identity or 'colorless'}):", size=12, color=theme.MUTED),
                     self._theme_picker(commanders), ft.Row(filters, spacing=4)]
         if s["info"]["bracket"]:
@@ -1110,6 +1112,50 @@ class DecksPage:
         if not sections:
             controls.append(ft.Text("Nothing fits these filters.", color=theme.MUTED))
         return ft.Column(controls, spacing=10, scroll=ft.ScrollMode.AUTO, expand=True)
+
+    def show_combos(self, s, commanders, identity):
+        """Available Combos, as on the desktop: every Commander Spellbook combo with the
+        commander in its colors, the closest to done first; ✓ in the deck, • owned."""
+        names = tuple(c["name"] for c in commanders)
+        if names not in self.combos:
+            found = self.busy("Looking up combos on Commander Spellbook",
+                              lambda: brackets.commander_combos(list(names), identity))
+            if found is None:
+                return
+            self.combos[names] = found
+        deck, owned, bracket = {e["name"] for e in s["entries"]}, s["owned"], s["info"]["bracket"]
+
+        def mark(name):
+            return ("✓ " if name in deck else "• " if owned.get(name.lower()) else "") + name
+
+        def missing(combo):
+            return sum(name not in deck for name in combo.cards)
+
+        def tile(combo):
+            allowed = "Any bracket" if combo.fits(1) else "Bracket 3+" if combo.fits(3) else "Bracket 4+"
+            to_add = missing(combo)
+            how = [ft.Text(combo.prerequisites, size=12)] if combo.prerequisites else []
+            how += [ft.Text(combo.steps, size=12)] if combo.steps else []
+            return ft.Container(ft.Column([
+                ft.Text("  +  ".join(map(mark, combo.cards)), size=13, weight=ft.FontWeight.W_600),
+                ft.Text(combo.results, size=12, color=theme.MUTED),
+                ft.Row([ft.Text(f"{to_add} to add" if to_add else "Complete", size=11.5, color=theme.GOLD),
+                        ft.Text(allowed, size=11.5, color=theme.LOSS if bracket and not combo.fits(bracket) else theme.MUTED),
+                        ft.Container(expand=True), theme.button("Commander Spellbook ↗", url=combo.url())], spacing=12),
+                *([ft.ExpansionTile(title=ft.Text("How it goes", size=12), controls=how)] if how else [])],
+                spacing=3, tight=True), padding=ft.Padding.symmetric(vertical=8),
+                border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)))
+
+        combos = sorted(self.combos[names], key=lambda c: (missing(c), len(c.cards)))
+        intro = (f"{len(combos):,} combos with {' or '.join(names)} in its colors, from Commander Spellbook "
+                 "(commanderspellbook.com), the closest to done first. ✓ in the deck, • in your collection."
+                 if combos else "Commander Spellbook has no combos with this commander in its colors.")
+        self.page.show_dialog(ft.AlertDialog(
+            title=ft.Text(f"Available Combos — {' + '.join(names)}"),
+            content=ft.Container(ft.Column([ft.Text(intro, size=12, color=theme.MUTED),
+                                            ft.ListView([tile(c) for c in combos], expand=True)], expand=True),
+                                 width=760, height=560),
+            actions=[theme.button("Close", lambda e: self.page.pop_dialog())]))
 
     def toggle_theme(self, key):
         themes = self.rec["themes"]

@@ -27,6 +27,7 @@ import sync  # noqa: E402
 import theme  # noqa: E402
 import web_decks  # noqa: E402
 import web_desktop  # noqa: E402
+import web_rules  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
 BACK_TO_EXIT = 2  # seconds to press back again to leave the app
@@ -492,6 +493,7 @@ def main(page: ft.Page):
     decks_page = web_decks.DecksPage(page, toast, busy)
 
     rules_view = rules_tab.Rules(page, toast, busy)
+    rules_page = web_rules.RulesPage(page, toast, busy)  # the desktop layout's
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
     tabs = [deck_builder, rules_view]
 
@@ -515,11 +517,9 @@ def main(page: ft.Page):
             scanner.close()
         index = page.navigation_bar.selected_index
         # The desktop layout has its own pages where they're built (Cards, Decks), else the phone's
-        pages = [collection_view()] + ([decks_page] if desktop_layout() else [deck_builder]) + [rules_view]
+        pages = [collection_view()] + ([decks_page, rules_page] if desktop_layout() else [deck_builder, rules_view])
         current = pages[index]
         body.content = current if index == 0 else current.view
-        if index == 2 and desktop_layout():  # the page's margins under the website's header
-            body.content = ft.Container(body.content, padding=ft.Padding.symmetric(horizontal=web_desktop.PAGE_PADDING, vertical=16))
         # The phone's + button, on Collection and Decks; the desktop layout has buttons instead
         page.floating_action_button.visible = not desktop_layout() and index != 2
         show_header()

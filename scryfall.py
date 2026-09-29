@@ -229,6 +229,18 @@ def oracle_record(data):
     }
 
 
+def card_rulings(name):
+    """(card database row, [(published, ruling)]) for a card by its exact name, from Scryfall:
+    the website's Card Rulings, since it doesn't download every card's rulings. (None, []) for
+    a name Scryfall doesn't know."""
+    _require_online()
+    data = _get_json("/cards/named", {"exact": name})
+    if data is None:
+        return None, []
+    found = _get_json(f"/cards/{data['id']}/rulings") or {"data": []}
+    return oracle_record(data), [(r.get("published_at"), r["comment"]) for r in found["data"]]
+
+
 def card_name_catalog():
     # Every card name Scryfall knows (about 1 MB), so the phone app can recognize cards in a
     # rules question without the whole card database

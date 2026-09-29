@@ -55,6 +55,10 @@ MUTED = QColor("gray")
 PRICE_MAX_AGE = timedelta(hours=24)
 CARD_DB_MAX_AGE = timedelta(days=7)  # the deck builder re-checks Scryfall's bulk data weekly
 RESULTS_SHOWN = 600
+# ponytail: diagnostics for a Deck Builder that vanished on the Stats tab (2026-09-29, not
+# reproduced): main.py hands in crash.log, and hideEvent notes what hid the window. Remove
+# once the cause is found.
+DIAGNOSTICS_LOG = None
 WORKS_SHOWN = 6  # lines of a card's "Works well with" (interactions.py) in its details
 
 
@@ -214,6 +218,19 @@ class ListsWindow(QWidget):
             view.addAction(action)
             action.triggered.connect(lambda _, on=on: self.set_lightweight(on))
         return menu_bar
+
+    def hideEvent(self, event):
+        # Notes in crash.log every time the window goes away: closed or minimized by the
+        # person (spontaneous, from Windows) or hidden by the app's own code (with where from)
+        if DIAGNOSTICS_LOG is not None:
+            import traceback
+            where = "by Windows (closed or minimized)" if event.spontaneous() else \
+                "by the app:\n" + "".join(traceback.format_stack(limit=12)[:-1])
+            DIAGNOSTICS_LOG.write(f"\n=== {datetime.now():%Y-%m-%d %H:%M:%S} Deck Builder hidden "
+                                  f"(tab: {self.card_tabs.tabText(self.card_tabs.currentIndex())}, "
+                                  f"list: {self._list['name'] if self._list else None}, "
+                                  f"minimized: {self.isMinimized()}) {where}\n")
+        super().hideEvent(event)
 
     def set_lightweight(self, on):
         # Lightweight mode shows the card list (and printing picker) as plain tables,
