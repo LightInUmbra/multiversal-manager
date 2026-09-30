@@ -6,6 +6,7 @@ import flet as ft
 import database as db
 import market
 import scryfall
+import sort_controls
 import theme
 from web_finance import _color, _each, _money, _percent, chart, high_low
 
@@ -123,12 +124,13 @@ class PhoneFinance:
                               else (market.PRICE_COL, True))
         rows = market.shown(self.entries, (self.search.value or "").strip().lower(), self.min_price, self.show,
                             column, descending)
-        self.rows.controls = [self.row(row, change) for row, change in rows[:SHOWN]]
+        shown = [row for row, _ in rows[:SHOWN]]  # swiping on a card's page follows the list
+        self.rows.controls = [self.row(row, change, shown, i) for i, (row, change) in enumerate(rows[:SHOWN])]
         self.status.value = (f"{len(rows):,} printings" + (f", the first {SHOWN} shown" if len(rows) > SHOWN else "")
                              + f". Prices from {self.summary['built']}, updated once a day.")
         self.page.update()
 
-    def row(self, row, change):
+    def row(self, row, change, rows, index):
         finish = " ✦" if row["foil"] else ""
         return ft.Container(ft.Row([
             ft.Column([ft.Text(row["name"] + finish, weight=ft.FontWeight.W_500, no_wrap=True,
@@ -138,11 +140,16 @@ class PhoneFinance:
             ft.Column([ft.Text(_money(row["price"])), ft.Text(_percent(change), size=12, color=_color(change))],
                       spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
         ], spacing=10), padding=ft.Padding.symmetric(horizontal=4, vertical=8),
-            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e: self.open(row))
+            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e: self.open_at(rows, index))
 
     # A printing's page
 
-    def open(self, row):
+    def open_at(self, rows, index):
+        self.open(rows[index], (rows, index, lambda to: self.open_at(rows, to)))
+
+    def open(self, row, pager=None):
+        """row's page. pager: (rows, index, go(index)) when it was opened from a list, so a swipe
+        or the arrows open the next or previous card"""
         self.detail = row
         width = min(MAX_IMAGE, (self.page.width or 400) - 40)
         finish = market.FINISH_LABELS[row["foil"]]
@@ -167,6 +174,7 @@ class PhoneFinance:
             ft.Row([ft.IconButton(ft.Icons.ARROW_BACK, tooltip="Back to the list", on_click=lambda e: self.back()),
                     ft.Text(row["name"], font_family=theme.TITLE_FONT, size=17, weight=ft.FontWeight.W_600,
                             color=theme.GOLD, expand=True, no_wrap=True, overflow=ft.TextOverflow.ELLIPSIS)], spacing=4),
+            *([sort_controls.pager(*pager)] if pager else []),
             ft.Row([ft.Image(src=market.image_url(row["scryfall_id"]), width=width, border_radius=14)],
                    alignment=ft.MainAxisAlignment.CENTER),
             ft.Column([
@@ -189,7 +197,8 @@ class PhoneFinance:
             self.card_details,
             ft.OutlinedButton("Open on Scryfall ↗", url=scryfall.scryfall_page(row["set_code"], row["collector_number"])),
         ]
-        self.view.content = ft.ListView(page_controls, expand=True, spacing=12, padding=ft.Padding.only(bottom=20))
+        content = ft.ListView(page_controls, expand=True, spacing=12, padding=ft.Padding.only(bottom=20))
+        self.view.content = sort_controls.swipe(content, *pager) if pager else content
         self.page.update()
         self.page.run_thread(self.look_up, row)
 

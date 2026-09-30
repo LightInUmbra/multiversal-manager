@@ -56,6 +56,7 @@ class PhoneRecommendations(web_decks.DecksPage):
     def __init__(self, page, toast, busy):
         super().__init__(page, toast, busy)
         self.tab, self.badges = web_decks.RECOMMENDED, {}
+        self.shown = []  # every card in the sections, in order, which swiping follows
         self.column = ft.Column(spacing=10)
 
     def show_for(self, list_id):
@@ -65,7 +66,7 @@ class PhoneRecommendations(web_decks.DecksPage):
 
     def refill_tab(self, update=True):
         # The sections, into the phone's column (a theme, filter or Show More works them out again)
-        self.badges = {}
+        self.badges, self.shown = {}, []
         built = self._recommended(self.s)
         self.column.controls = built.controls if isinstance(built, ft.Column) else [built]
         if update:
@@ -83,23 +84,40 @@ class PhoneRecommendations(web_decks.DecksPage):
     def _card_menu(self, card, s):
         return []  # no right-click on a phone: the card's dialog has Add
 
+    def _card_grid(self, cards, s):
+        self.shown += cards
+        return super()._card_grid(cards, s)
+
     def select(self, selected):
         kind, card = selected
         if kind != "card":
             return
+        index = next((i for i, c in enumerate(self.shown) if c is card), None)
+        if index is None:
+            self.shown, index = [card], 0
+        self.show_card(self.shown, index)
+
+    def show_card(self, rows, index):
+        # rows[index]'s dialog; swiping moves along rows
+        card = rows[index]
+
+        def go(to):
+            self.page.pop_dialog()
+            self.show_card(rows, to)
 
         def add(e):
             self.page.pop_dialog()
             self.add(card)
 
         self.page.show_dialog(ft.AlertDialog(
-            content=ft.Column([
+            content=sort_controls.swipe(ft.Column([
+                sort_controls.pager(rows, index, go),
                 *([ft.Image(src=card["image_url"], width=260, border_radius=10)] if card["image_url"] else []),
                 ft.Text(card["name"], size=17, weight=ft.FontWeight.BOLD),
                 ft.Text(card["type_line"] or "", size=13, color=MUTED),
                 ft.Text(card["oracle_text"] or "", size=13.5),
                 *([ft.Text(card["note"], size=13, color=ft.Colors.PRIMARY)] if card.get("note") else []),
-                *web_decks.works_well_with(card)], tight=True, spacing=8, scroll=ft.ScrollMode.AUTO),
+                *web_decks.works_well_with(card)], tight=True, spacing=8, scroll=ft.ScrollMode.AUTO), rows, index, go),
             actions=[ft.TextButton("Close", on_click=lambda e: self.page.pop_dialog()),
                      ft.FilledButton(f"Add to {SECTION_TITLES[self.add_to]}", on_click=add)]))
 
@@ -114,6 +132,7 @@ class Decks:
         self.recommendations = None  # PhoneRecommendations, made the first time they're shown
         # Sort and group the open list (card_sorting.py); each list remembers its own
         self.sorting = sort_controls.SortState("deck", "list:none", lambda: self.show_list())
+        self.view_tip = sort_controls.ViewTip(page)
         self.view = ft.Column(expand=True)
 
     def refresh(self):
@@ -253,8 +272,26 @@ class Decks:
         # The cards in the list's sort and grouping (a deck keeps its sections apart)
         self.sorting.set_key(f"list:{self.list_id}", "deck" if is_deck else "list")
         controls.append(ft.Row([ft.Container(expand=True), sort_controls.chip(self.page, self.sorting)]))
-        for title, group in self.sorting.arrange(entries):
-            title = title or "Cards"
+        tip = self.view_tip.control(self.sorting, self.show_list)
+        if tip:
+            controls.append(tip)
+        groups = [(title or "Cards", group) for title, group in self.sorting.arrange(entries)]
+        shown = [e for title, group in groups if title not in self.sorting.folded for e in group]  # swiping's order
+
+        def open_entry(e):
+            self.edit_entry(shown, next(i for i, s in enumerate(shown) if s["id"] == e["id"]), is_deck)
+
+        if self.sorting.view["display"] != "List":
+            # Text, Grid or Stacks (three cards across); tapping a card opens it, as in the list
+            width = ((self.page.width or 400) - 60) / 3 - 2 * sort_controls.ITEM_PAD
+            controls.append(sort_controls.card_views(
+                self.sorting, groups,
+                lambda e, control: ft.Container(control, padding=sort_controls.ITEM_PAD, on_click=lambda ev: open_entry(e)),
+                width, columns=2 if (self.page.width or 400) >= 600 else 1))
+            self.view.controls = [ft.ListView(controls, expand=True, spacing=4, padding=ft.Padding.symmetric(horizontal=4))]
+            self.page.update()
+            return
+        for title, group in groups:
             controls.append(sort_controls.heading(self.sorting, title, group))
             if title in self.sorting.folded:
                 continue
@@ -268,7 +305,7 @@ class Decks:
                     trailing=ft.Text(f"{have} owned" if have else "not owned", size=12,
                                      color=ft.Colors.PRIMARY if have else MUTED),
                     dense=True, content_padding=ft.Padding.symmetric(horizontal=4),
-                    on_click=lambda ev, e=e: self.edit_entry(e, is_deck)))
+                    on_click=lambda ev, e=e: open_entry(e)))
         if not entries:
             controls.append(ft.Text("No cards yet. Tap + to add some.", color=MUTED))
         self.view.controls = [ft.ListView(controls, expand=True, spacing=4, padding=ft.Padding.symmetric(horizontal=4))]
@@ -350,7 +387,9 @@ class Decks:
             actions=[delete, ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
                      ft.TextButton("Save", on_click=save)]))
 
-    def edit_entry(self, entry, is_deck):
+    def edit_entry(self, rows, index, is_deck):
+        # rows[index]'s dialog; swiping moves along rows, saving any change first
+        entry = rows[index]
         quantity = ft.TextField(label="Quantity", value=str(entry["quantity"]), keyboard_type=ft.KeyboardType.NUMBER)
         section = ft.Dropdown(label="Section", value=entry["section"], visible=is_deck,
                               options=[ft.DropdownOption(key=s, text=SECTION_TITLES[s]) for s in SECTIONS])
@@ -382,11 +421,21 @@ class Decks:
         change = ft.OutlinedButton("Change printing", icon=ft.Icons.COLLECTIONS_OUTLINED, on_click=load_printings)
         printing.on_select = show_finishes
 
+        def go(to):
+            chosen = (printings[int(printing.value)].id, int(finish.value)) if printings else None
+            if (quantity.value != str(entry["quantity"]) or (is_deck and section.value != entry["section"])
+                    or chosen not in (None, (entry["scryfall_id"], entry["foil"]))):
+                if not save(None):
+                    return  # the quantity isn't a number: stay to fix it
+            else:
+                self.page.pop_dialog()
+            self.edit_entry(rows, to, is_deck)
+
         def save(e):
             count = _number(quantity)
             if count is None:
                 self.page.update()
-                return
+                return False
             self.page.pop_dialog()
             where = section.value if is_deck else entry["section"]
             card = printings[int(printing.value)] if printings else None
@@ -399,6 +448,7 @@ class Decks:
             else:
                 db.update_list_entry(entry["id"], quantity=count, section=where)
             self._changed()
+            return True
 
         def remove_clicked(e):
             if remove.data:
@@ -420,7 +470,8 @@ class Decks:
             details.append(ft.Text(where, color=MUTED, size=13))
         self.page.show_dialog(ft.AlertDialog(
             title=ft.Text(entry["name"]), scrollable=True,
-            content=ft.Column([*details, change, printing, finish, quantity, section], tight=True, spacing=12),
+            content=sort_controls.swipe(ft.Column([sort_controls.pager(rows, index, go), *details, change, printing,
+                                                   finish, quantity, section], tight=True, spacing=12), rows, index, go),
             actions=[remove, ft.TextButton("Cancel", on_click=lambda e: self.page.pop_dialog()),
                      ft.TextButton("Save", on_click=save)]))
 

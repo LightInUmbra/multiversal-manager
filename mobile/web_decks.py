@@ -207,6 +207,7 @@ class DecksPage:
         # Sort and group the open list (card_sorting.py); each list remembers its own
         self.sorting = sort_controls.SortState("deck", "list:none", self._sorted)
         self.sort_tools = ft.Row(spacing=8)
+        self.view_tip = sort_controls.ViewTip(page)
         self.add_to = "Main"
         self.selected = None          # ("entry", id) or ("card", Scryfall/collection row)
         self.spellbook = {}           # list id -> Commander Spellbook's reading, until the list changes
@@ -598,8 +599,9 @@ class DecksPage:
         if s["is_deck"]:
             tools += [_dropdown(self.add_to, [(sec, f"Add to: {SECTION_TITLES[sec]}") for sec in SECTIONS],
                                 lambda e: self.set_add_to(e.control.value), 190)]
-        tools.append(_dropdown(self.row_size, [(k, f"Rows: {k}") for k in ROW_SIZES],
-                               lambda e: self.set_row_size(e.control.value), 165))
+        self.row_size_box = _dropdown(self.row_size, [(k, f"Rows: {k}") for k in ROW_SIZES],
+                                      lambda e: self.set_row_size(e.control.value), 165)
+        tools.append(self.row_size_box)
         tools.append(self.sort_tools)  # last, so it wraps onto a line of its own in a narrow panel
         # Headings with a drag handle between each two, in place of the rows' 8 pixel spacing
         cells, self.header_cells = [], []
@@ -607,7 +609,7 @@ class DecksPage:
             cell = self._cell(ft.Text(label.upper(), size=11, weight=ft.FontWeight.W_600, color=theme.GOLD), i, right)
             self.header_cells.append(cell)
             cells += [cell] + ([self._resize_handle(i)] if i < len(GRID_HEADERS) - 1 else [])
-        header = ft.ContextMenu(
+        self.table_header = header = ft.ContextMenu(
             ft.Container(ft.Row(cells, spacing=0), bgcolor=theme.COLORS["surface_container"],
                          padding=ft.Padding.symmetric(horizontal=10, vertical=8)),
             secondary_items=[ft.PopupMenuItem(content="Reset column widths", on_click=lambda e: self.reset_columns())],
@@ -624,6 +626,17 @@ class DecksPage:
                                  if s["problems"] else None)
         self.sort_tools.controls = sort_controls.toolbar(self.sorting)
         rows, self.row_boxes, self.row_lines = [], {}, []
+        tip = self.view_tip.control(self.sorting, self._sorted)
+        display = self.sorting.view["display"]
+        self.table_header.visible = self.row_size_box.visible = display == "List"
+        if display != "List":
+            # Text, Grid or Stacks: cards click and right-click as the rows do
+            self.deck_rows.controls = [ft.Container(sort_controls.card_views(
+                self.sorting, self._groups(s), lambda e, control: self._view_item(e, s, control), GRID_CARD, columns=2),
+                padding=ft.Padding.symmetric(horizontal=10, vertical=6))]
+            return
+        if tip:
+            rows.append(ft.Container(tip, padding=ft.Padding.only(left=10, right=10, top=8)))
         for title, group in self._groups(s):
             folded = title in self.sorting.folded
             rows.append(ft.Container(
@@ -715,6 +728,14 @@ class DecksPage:
             line, bgcolor=theme.COLORS["primary_container"] if on else None, on_click=lambda ev: self.click_entry(e),
             padding=ft.Padding.symmetric(horizontal=10, vertical=ROW_SIZES[self.row_size]),
             border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)))
+        self.row_boxes[e["id"]] = box
+        return ft.ContextMenu(box, secondary_items=self._entry_menu(e, s), secondary_trigger=ft.ContextMenuTrigger.DOWN)
+
+    def _view_item(self, e, s, control):
+        # A card in the Text, Grid or Stacks view: highlighted when selected, like a row
+        box = ft.Container(control, padding=sort_controls.ITEM_PAD, border_radius=8, tooltip=e["name"],
+                           bgcolor=theme.COLORS["primary_container"] if self.selected == ("entry", e["id"]) else None,
+                           on_click=lambda ev: self.click_entry(e))
         self.row_boxes[e["id"]] = box
         return ft.ContextMenu(box, secondary_items=self._entry_menu(e, s), secondary_trigger=ft.ContextMenuTrigger.DOWN)
 

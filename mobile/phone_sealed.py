@@ -66,19 +66,20 @@ class PhoneSealed:
         rows = [r for r in db.get_sealed() if not needle or needle in " ".join(
             str(r[k] or "") for k in ("name", "set_name", "set_code", "product_type", "notes")).lower()]
         self.search_row.controls = [self.search, sort_controls.chip(self.page, self.sorting)]
-        lines = []
+        lines, shown = [], []  # shown: the items in the order they show, which swiping follows
         for title, members in self.sorting.arrange(rows):
             if title is not None:
                 lines.append(sort_controls.heading(self.sorting, title, members, noun="item"))
                 if title in self.sorting.folded:
                     continue
-            lines += [self.row(r) for r in members]
+            lines += [self.row(r, shown, len(shown) + j) for j, r in enumerate(members)]
+            shown += members
         self.list.controls = lines or [ft.Container(ft.Text(
             "No sealed product yet. Tap + to add a booster box, bundle, precon…" if not needle else "Nothing matches.",
             italic=True, color=theme.MUTED), padding=ft.Padding.only(top=20))]
         self.page.update()
 
-    def row(self, r):
+    def row(self, r, rows, index):
         change = price_changes.sealed_gain(r)
         worth = f"{r['quantity']} × {_money(r['value'])}"
         return ft.Container(ft.Row([
@@ -91,7 +92,7 @@ class PhoneSealed:
                                color=gain_color(change) if change is not None else theme.MUTED)],
                       spacing=1, horizontal_alignment=ft.CrossAxisAlignment.END),
         ], spacing=10), padding=ft.Padding.symmetric(horizontal=4, vertical=8),
-            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e, r=r: self.details(existing=r))
+            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e: self.details(existing=r, rows=rows, index=index))
 
     # Adding
 
@@ -101,7 +102,9 @@ class PhoneSealed:
 
     # The details sheet: adding a product from the list, typing one in, or editing one you own
 
-    def details(self, existing=None, product=None, typed=False, on_added=None):
+    def details(self, existing=None, product=None, typed=False, on_added=None, rows=None, index=None):
+        """An item's sheet: existing (one you own, which swipes along rows from index), or
+        product (from the catalog) or typed (your own) to add"""
         name = ft.TextField(label="Name", dense=True, hint_text="e.g. Secret Lair: Bitterblossom Dreams")
         set_name = ft.TextField(label="Set", dense=True, hint_text="Optional", expand=True)
         kind = ft.TextField(label="Type", dense=True, hint_text="Optional, e.g. Booster Box", expand=True)
@@ -125,19 +128,31 @@ class PhoneSealed:
         subtitle = (" · ".join(filter(None, [existing["set_name"], existing["product_type"]])) if existing else
                     " · ".join(filter(None, [product["set_name"], product["product_type"]])) if product else "")
 
+        inputs = [name, set_name, kind, quantity, paid, value, notes]
+        start = [f.value for f in inputs]
+
+        def go(to):
+            # Swiped to another item: saves any change first
+            if [f.value for f in inputs] != start:
+                if not save(None):
+                    return  # something to fix first
+            else:
+                self.page.pop_dialog()
+            self.details(existing=rows[to], rows=rows, index=to)
+
         def save(e):
             try:
                 count = max(1, int(quantity.value))
             except ValueError:
                 quantity.error_text = "A number"
                 self.page.update()
-                return
+                return False
             fields = {"quantity": count, "paid": _price(paid), "value": _price(value), "notes": notes.value or ""}
             if custom:
                 if not (name.value or "").strip():
                     name.error_text = "Name the product"
                     self.page.update()
-                    return
+                    return False
                 fields |= {"name": name.value.strip(), "set_name": (set_name.value or "").strip() or None,
                            "product_type": (kind.value or "").strip() or None}
             self.page.pop_dialog()
@@ -152,6 +167,7 @@ class PhoneSealed:
                 if on_added:
                     on_added()
             self.refresh()
+            return True
 
         def remove(e):
             if remove_button.data:
@@ -165,7 +181,8 @@ class PhoneSealed:
                 self.page.update()
 
         remove_button = ft.TextButton("Remove", on_click=remove, style=ft.ButtonStyle(color=theme.LOSS))
-        controls = [ft.Text(title, size=16, weight=ft.FontWeight.BOLD)]
+        controls = [sort_controls.pager(rows, index, go)] if rows else []
+        controls.append(ft.Text(title, size=16, weight=ft.FontWeight.BOLD))
         if subtitle:
             controls.append(ft.Text(subtitle, size=12, color=theme.MUTED))
         if custom:
@@ -178,8 +195,9 @@ class PhoneSealed:
                 ft.TextButton("Look up on TCGplayer ↗",
                               url=f"https://www.tcgplayer.com/search/magic/product?q={quote_plus(existing['name'])}")],
                 alignment=ft.MainAxisAlignment.SPACE_BETWEEN))
-        self.page.show_dialog(ft.BottomSheet(ft.Container(ft.Column(controls, tight=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
-                                                                    scroll=ft.ScrollMode.AUTO), padding=16),
+        body = ft.Container(ft.Column(controls, tight=True, spacing=10, horizontal_alignment=ft.CrossAxisAlignment.STRETCH,
+                                      scroll=ft.ScrollMode.AUTO), padding=16)
+        self.page.show_dialog(ft.BottomSheet(sort_controls.swipe(body, rows, index, go) if rows else body,
                                              show_drag_handle=True))
 
 

@@ -5,7 +5,7 @@ collection, a deck or list in the Deck Builder, and the sealed product table.
 
 # Imports
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QTableWidgetItem, QToolButton, QWidget
+from PySide6.QtWidgets import QButtonGroup, QComboBox, QHBoxLayout, QLabel, QTableWidgetItem, QToolButton, QWidget
 
 import background
 import card_sorting
@@ -37,6 +37,17 @@ class SortBar(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         for widget in (QLabel("Sort:"), self.sort_combo, self.direction, QLabel("Group:"), self.group_combo):
             layout.addWidget(widget)
+        # A deck's or list's View: List, Text, Grid or Stacks
+        layout.addSpacing(12)
+        self.view_label = QLabel("View:")
+        layout.addWidget(self.view_label)
+        self.display_buttons = QButtonGroup(self)
+        for display in card_sorting.DISPLAYS:
+            button = QToolButton(text=display, checkable=True, autoRaise=True)
+            button.setToolTip(f"Show the cards as {display.lower()}")
+            button.clicked.connect(lambda _, d=display: self._set({**self.view, "display": d}))
+            self.display_buttons.addButton(button)
+            layout.addWidget(button)
         self._show()
         self.sort_combo.currentTextChanged.connect(lambda sort: self.pick(sort) if sort != self.view["sort"] else None)
         self.direction.clicked.connect(lambda: self._set({**self.view, "descending": not self.view["descending"]}))
@@ -72,6 +83,11 @@ class SortBar(QWidget):
             combo.blockSignals(True)
             combo.setCurrentText(value)
             combo.blockSignals(False)
+        shown = self.kind in card_sorting.DISPLAY_KINDS
+        self.view_label.setVisible(shown)
+        for button in self.display_buttons.buttons():
+            button.setVisible(shown)
+            button.setChecked(button.text() == self.view["display"])
         ascending, descending = card_sorting.direction_labels(self.view["sort"])
         self.direction.setText(f"↓ {descending}" if self.view["descending"] else f"↑ {ascending}")
 

@@ -23,7 +23,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox, QTreeWidget,
     QTreeWidgetItem, QHeaderView, QAbstractItemView, QPushButton, QSplitter, QMessageBox, QDialog,
     QDialogButtonBox, QInputDialog, QMenu, QFileDialog, QTabBar, QCheckBox, QTextBrowser, QProgressBar,
-    QToolButton, QMenuBar,
+    QToolButton, QMenuBar, QStackedWidget, QScrollArea, QFrame,
 )
 
 import background
@@ -35,7 +35,7 @@ import finance
 import formats
 import interactions
 import scryfall
-from card_browser import CardBrowser, PrintingDialog
+from card_browser import CardBrowser, DeckCanvas, PrintingDialog
 from card_image import CardImage
 from import_review_dialog import count, start_import
 from deck_stats import completion, deck_text, summary  # noqa: F401
@@ -224,6 +224,8 @@ class ListsWindow(QWidget):
         (self.lightweight_action if on else self.standard_action).setChecked(True)
         self.card_browser.set_lightweight(on)
         self.recommend_panel.set_lightweight(on)
+        if self.deck_canvas.groups:
+            self.deck_canvas.show_groups(self.deck_canvas.groups, self.deck_canvas.mode, on)
 
     def _build_detail_panel(self):
         self.card_image = CardImage(width=240)
@@ -345,6 +347,41 @@ class ListsWindow(QWidget):
         remove_action.triggered.connect(self.remove_selected)
         self.deck_tree.addAction(remove_action)
 
+        # The list's other views (the sort bar's View): Text, and Grid or Stacks of card images.
+        # The tree above stays filled and holds the selection for all of them
+        self.deck_text = QTextBrowser()
+        self.deck_text.setOpenLinks(False)
+        self.deck_text.anchorClicked.connect(lambda url: self.select_entry(int(url.toString())))
+        self.deck_text.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        self.deck_text.customContextMenuRequested.connect(self._text_menu)
+        self.deck_canvas = DeckCanvas()
+        self.deck_canvas.clicked.connect(self.select_entry)
+        self.deck_canvas.menu_requested.connect(lambda entry_id: (self.select_entry(entry_id),
+                                                                  self.show_entries_menu()))
+        canvas_remove = QAction("Remove", self.deck_canvas, shortcut=QKeySequence.StandardKey.Delete)
+        canvas_remove.setShortcutContext(Qt.ShortcutContext.WidgetShortcut)
+        canvas_remove.triggered.connect(self.remove_selected)
+        self.deck_canvas.addAction(canvas_remove)
+        canvas_scroll = QScrollArea()
+        canvas_scroll.setWidgetResizable(True)
+        canvas_scroll.setWidget(self.deck_canvas)
+        self.deck_views = QStackedWidget()
+        for widget in (self.deck_tree, self.deck_text, canvas_scroll):
+            self.deck_views.addWidget(widget)
+
+        # Tells people the other views exist, until they dismiss it or pick one
+        self.views_tip = QFrame()
+        self.views_tip.setFrameShape(QFrame.Shape.StyledPanel)
+        tip_layout = QHBoxLayout(self.views_tip)
+        tip_layout.setContentsMargins(8, 4, 4, 4)
+        tip_label = QLabel(f"<b>New:</b> {card_sorting.VIEW_TIP}")
+        tip_label.setWordWrap(True)
+        tip_button = QPushButton("Got it")
+        tip_button.clicked.connect(self._tip_seen)
+        tip_layout.addWidget(tip_label, stretch=1)
+        tip_layout.addWidget(tip_button)
+        self.views_tip.setVisible(not self.settings.value("deck_views_tip_seen", False, type=bool))
+
         panel = QWidget()
         layout = QVBoxLayout(panel)
         layout.addLayout(top)
@@ -355,7 +392,8 @@ class ListsWindow(QWidget):
         layout.addWidget(self.problems_label)
         layout.addWidget(self.bracket_label)
         layout.addWidget(self.sort_bar)
-        layout.addWidget(self.deck_tree, stretch=1)
+        layout.addWidget(self.views_tip)
+        layout.addWidget(self.deck_views, stretch=1)
         return panel
 
     def _build_card_panel(self):
@@ -660,12 +698,67 @@ class ListsWindow(QWidget):
                 header.addChild(self._deck_item(entry, have[entry["id"]], statuses.get(entry["id"])))
             header.setExpanded(True)
 
+        self._show_display(groups, have)
+
         self.show_card(self._card[0] if self._card else None, self._card[1] if self._card else None)
         self.refresh_prices()
         if self.recommending():
             self.update_recommendations()
         if self.showing_stats():
             self.update_stats()
+
+    def _show_display(self, groups, have):
+        # The list in the sort bar's View
+        display = self.sort_bar.view["display"]
+        if display != "List" and not self.views_tip.isHidden():
+            self._tip_seen()
+        if display == "Text":
+            self.deck_text.setHtml(self._text_html(groups, have))
+        elif display != "List":
+            self.deck_canvas.show_groups(groups, display, self.card_browser.lightweight)
+            self.deck_canvas.selected = {e["id"] for e in self.selected_entries()}
+        self.deck_views.setCurrentIndex({"List": 0, "Text": 1}.get(display, 2))
+
+    def _text_html(self, groups, have):
+        # Quantities and names in columns, like a printed decklist; a name links to its card,
+        # and the ones you don't own are in italics
+        color = self.palette().text().color().name()
+        # ponytail: columns follow the width at load, not later resizes
+        columns = card_sorting.balance(groups, max(1, self.deck_text.viewport().width() // 230))
+        cells = []
+        for column in columns:
+            lines = []
+            for title, entries in column:
+                lines.append(f"<p style='margin:8px 0 2px'><b>{html.escape(title)} "
+                             f"({sum(e['quantity'] for e in entries)})</b></p>")
+                for e in entries:
+                    name = html.escape(e["name"])
+                    lines.append(f"{e['quantity']}&nbsp;&nbsp;<a href='{e['id']}' style='color:{color};"
+                                 f"text-decoration:none'>{name if have[e['id']] else f'<i>{name}</i>'}</a><br>")
+            cells.append(f"<td valign='top' style='padding-right:24px'>{''.join(lines)}</td>")
+        return f"<table><tr>{''.join(cells)}</tr></table>"
+
+    def _tip_seen(self):
+        self.settings.setValue("deck_views_tip_seen", True)
+        self.views_tip.hide()
+
+    def select_entry(self, entry_id):
+        # Selects an entry picked in the Text, Grid or Stacks view (the tree holds the selection)
+        for index in range(self.deck_tree.topLevelItemCount()):
+            header = self.deck_tree.topLevelItem(index)
+            for child in range(header.childCount()):
+                item = header.child(child)
+                if item.data(0, ID_ROLE) == entry_id:
+                    self.deck_tree.clearSelection()
+                    item.setSelected(True)
+                    self.deck_tree.scrollToItem(item)
+                    return
+
+    def _text_menu(self, position):
+        anchor = self.deck_text.anchorAt(position)
+        if anchor:
+            self.select_entry(int(anchor))
+            self.show_entries_menu()
 
     def _deck_item(self, entry, got, status):
         item = QTreeWidgetItem([
@@ -735,6 +828,8 @@ class ListsWindow(QWidget):
 
     def on_deck_selection(self):
         entries = self.selected_entries()
+        self.deck_canvas.selected = {e["id"] for e in entries}
+        self.deck_canvas.update()
         if len(entries) == 1:
             self.show_card(entries[0], entries[0]["id"])
 
@@ -799,7 +894,13 @@ class ListsWindow(QWidget):
         if not item.isSelected():
             self.deck_tree.clearSelection()
             item.setSelected(True)
+        self.show_entries_menu()
+
+    def show_entries_menu(self):
+        # The menu for the selected entries, whichever view they were picked in
         entries = self.selected_entries()
+        if not entries:
+            return
         menu = QMenu(self)
         if len(entries) == 1:
             entry = entries[0]

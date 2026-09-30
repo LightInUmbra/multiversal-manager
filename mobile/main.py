@@ -149,6 +149,7 @@ def main(page: ft.Page):
                 if text in f"{r['name']} {r['set_name']} {r['artist'] or ''}".lower()]
         search_row.controls = [search, sort_controls.chip(page, phone_sort)]
         card_list.controls = []
+        shown = []  # the cards in the order they show, which swiping follows
         for title, members in phone_sort.arrange(rows, busy):
             if title is not None:
                 card_list.controls.append(sort_controls.heading(phone_sort, title, members))
@@ -156,18 +157,32 @@ def main(page: ft.Page):
                     continue
             card_list.controls += [
                 ft.ListTile(title=ft.Text(f"{r['quantity']}× {r['name']}"), subtitle=ft.Text(details(r)),
-                            trailing=ft.Text(_money(r["price"])), on_click=lambda e, r=r: edit_card(r))
-                for r in members]
+                            trailing=ft.Text(_money(r["price"])),
+                            on_click=lambda e, i=len(shown) + j: edit_card(shown, i))
+                for j, r in enumerate(members)]
+            shown += members
         _, cards, value = db.get_summary()
         summary.value = f"{cards} cards · ${value:,.2f}"
         page.update()
 
-    def edit_card(row):
+    def edit_card(rows, index):
+        # rows[index]'s dialog; swiping moves along rows, saving any change first
+        row = rows[index]
         quantity = ft.TextField(label="Quantity", value=str(row["quantity"]), keyboard_type=ft.KeyboardType.NUMBER)
         condition = ft.Dropdown(label="Condition", value=row["condition"], options=_options(copy_details.CONDITIONS))
         language = ft.Dropdown(label="Language", value=row["language"], options=_options(copy_details.LANGUAGES))
         notes = ft.TextField(label="Notes", value=row["notes"], multiline=True)
         remove = ft.TextButton("Remove")
+
+        def go(to):
+            changed = (quantity.value != str(row["quantity"]), condition.value != row["condition"],
+                       language.value != row["language"], (notes.value or "") != (row["notes"] or ""))
+            if any(changed):
+                if not save(None):
+                    return  # the quantity isn't a number: stay to fix it
+            else:
+                page.pop_dialog()
+            edit_card(rows, to)
 
         def save(e):
             try:
@@ -175,7 +190,7 @@ def main(page: ft.Page):
             except ValueError:
                 quantity.error_text = "Enter a number"
                 page.update()
-                return
+                return False
             page.pop_dialog()
             if count < 1:
                 db.remove_card(row["id"])
@@ -185,6 +200,7 @@ def main(page: ft.Page):
                 db.update_card(row["id"], row["name"], row["set_name"], row["price"], count, **fields,
                                condition=condition.value, language=language.value, notes=notes.value)
             show_cards()
+            return True
 
         def remove_clicked(e):
             # A second tap confirms, so a stray one can't lose a card
@@ -202,8 +218,10 @@ def main(page: ft.Page):
         image = [ft.Image(src=row["image_url"], height=280)] if row["image_url"] else []
         page.show_dialog(ft.AlertDialog(
             title=ft.Text(row["name"]), scrollable=True,
-            content=ft.Column([*image, ft.Text(details(row)), ft.Text(f"{_money(row['price'])} each"),
-                               quantity, condition, language, notes], tight=True),
+            content=sort_controls.swipe(ft.Column([
+                sort_controls.pager(rows, index, go), *image, ft.Text(details(row)),
+                ft.Text(f"{_money(row['price'])} each"), quantity, condition, language, notes], tight=True),
+                rows, index, go),
             actions=[remove, ft.TextButton("Cancel", on_click=lambda e: page.pop_dialog()),
                      ft.TextButton("Save", on_click=save)]))
 

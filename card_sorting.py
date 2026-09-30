@@ -2,7 +2,7 @@
 Sorting and grouping cards the same way in the desktop app, the website and the phone: the
 collection, decks, binders and wishlists, and sealed product. Qt-free.
 
-A view is a dict {"sort": ..., "descending": bool, "group": ...}. Each list remembers its own
+A view is a dict {"sort": ..., "descending": bool, "group": ..., "display": ...}. Each list remembers its own
 on the device (load/save). Rows are sqlite3.Rows or dicts. Mana value, Color and Type need the
 card's rules (type_line, cmc, colors): deck entries come with them, the collection gets them
 from with_rules(), and fetch_rules() looks up the ones the card database lacks.
@@ -27,6 +27,10 @@ GROUPS = {"collection": ["Nothing", "Type", "Color", "Mana value", "Rarity", "Se
           "list": ["Nothing", "Type", "Color", "Mana value", "Rarity", "Set", "Finish"],
           "sealed": ["Nothing", "Set", "Product type"]}
 NEEDS_RULES = {"Mana value", "Color", "Type"}
+# How a deck, binder or wishlist shows its cards (the collection and sealed are always a list)
+DISPLAYS = ["List", "Text", "Grid", "Stacks"]
+DISPLAY_KINDS = {"deck", "list"}
+VIEW_TIP = "Decks and lists can also show as Text, Grid or Stacks. Pick one from View."
 # Sorts that start biggest (or newest) first when picked
 DESCENDING_FIRST = {"Price", "Quantity", "Date added", "Total", "Change", "Paid", "Gain / Loss"}  # desktop columns too
 
@@ -43,7 +47,7 @@ def sorts_for(kind):
 
 
 def default(kind):
-    return {"sort": "Name", "descending": False, "group": GROUPS[kind][0]}
+    return {"sort": "Name", "descending": False, "group": GROUPS[kind][0], "display": "List"}
 
 
 def direction_labels(sort):
@@ -82,6 +86,8 @@ def load(key, kind, extra_sorts=()):
         pass
     if view["sort"] not in sorts_for(kind) + list(extra_sorts) or view["group"] not in GROUPS[kind]:
         return default(kind)
+    if view["display"] not in DISPLAYS:
+        view["display"] = "List"
     return view
 
 
@@ -265,3 +271,16 @@ def heading(title, rows, noun="card"):
     # A group's heading line: "Creatures — 32 cards · $145.20" (noun: "item" for sealed product)
     copies, value = totals(rows)
     return f"{title} — {copies} {noun}{'s' if copies != 1 else ''}" + (f" · ${value:,.2f}" if value else "")
+
+
+def balance(groups, columns):
+    """Groups split in order into up to columns lists of about the same number of lines
+    (a heading and its cards), for the Text view"""
+    total = sum(len(rows) + 1 for _, rows in groups)
+    result, lines = [[]], 0
+    for title, rows in groups:
+        if result[-1] and len(result) < columns and lines + (len(rows) + 1) / 2 > total * len(result) / columns:
+            result.append([])
+        result[-1].append((title, rows))
+        lines += len(rows) + 1
+    return result

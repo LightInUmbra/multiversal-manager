@@ -7,8 +7,8 @@ list and by the printing picker.
 # Imports
 from collections import OrderedDict
 
-from PySide6.QtCore import Qt, QSize, QAbstractListModel, QModelIndex, Signal
-from PySide6.QtGui import QColor, QPixmap
+from PySide6.QtCore import Qt, QSize, QAbstractListModel, QModelIndex, QRect, Signal
+from PySide6.QtGui import QColor, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (
     QStackedWidget, QListView, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView, QDialog,
     QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QCheckBox, QRadioButton, QButtonGroup, QDialogButtonBox,
@@ -353,3 +353,150 @@ class PrintingDialog(QDialog):
         return {**{key: self._current[key] for key in ("name", "scryfall_id", "set_code", "set_name",
                                                       "collector_number", "image_url")},
                 "foil": foil, "price": price}
+
+
+class DeckCanvas(QWidget):
+    """A deck's groups drawn as card images: "Grid" (rows under each heading) or "Stacks" (a
+    column of overlapping cards per group, the hovered one lifted). Lightweight mode draws
+    name placeholders and downloads nothing. Emits the entry id clicked or right-clicked;
+    selected (a set of ids) gets a highlight. Goes in a QScrollArea."""
+
+    clicked = Signal(int)
+    menu_requested = Signal(int)
+
+    GAP, HEADING, STEP = 10, 26, 30  # STEP: how much of each card a stack leaves showing
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setMouseTracking(True)
+        self.setFocusPolicy(Qt.FocusPolicy.StrongFocus)
+        self.groups, self.mode, self.lightweight, self.selected = [], "Grid", False, set()
+        self._cards, self._headings, self._hover = [], [], None  # [(QRect, entry)], [(QRect, text)], index
+        self._thumbs, self._loading = {}, set()
+
+    def show_groups(self, groups, mode, lightweight):
+        self.groups, self.mode, self.lightweight, self._hover = groups, mode, lightweight, None
+        self._place()
+
+    def _place(self):
+        size, gap = THUMB_SIZE, self.GAP
+        width = max(size.width() + 2 * gap, self.width())
+        self._cards, self._headings = [], []
+        x = y = bottom = gap
+        for title, entries in self.groups:
+            heading = f"{title} ({sum(e['quantity'] for e in entries)})"
+            if self.mode == "Stacks":
+                if x + size.width() > width and x > gap:  # the next column wraps below
+                    x, y = gap, bottom + gap
+                self._headings.append((QRect(x, y, size.width(), self.HEADING), heading))
+                top = y + self.HEADING
+                for i, entry in enumerate(entries):
+                    self._cards.append((QRect(x, top + i * self.STEP, size.width(), size.height()), entry))
+                bottom = max(bottom, top + max(len(entries) - 1, 0) * self.STEP + size.height())
+                x += size.width() + gap
+            else:
+                self._headings.append((QRect(gap, y, width - 2 * gap, self.HEADING), heading))
+                y += self.HEADING
+                per_row = max(1, (width - gap) // (size.width() + gap))
+                for i, entry in enumerate(entries):
+                    row, column = divmod(i, per_row)
+                    self._cards.append((QRect(gap + column * (size.width() + gap),
+                                              y + row * (size.height() + gap), size.width(), size.height()), entry))
+                y += -(-len(entries) // per_row) * (size.height() + gap) + gap
+                bottom = y
+        self.setMinimumHeight(bottom + gap)
+        self.update()
+
+    def resizeEvent(self, event):
+        if event.size().width() != event.oldSize().width():
+            self._place()
+        super().resizeEvent(event)
+
+    def _thumb(self, url):
+        if self.lightweight or not url:
+            return None
+        if url not in self._thumbs and url not in self._loading:
+            self._loading.add(url)
+            background.run(card_image._fetch, url, on_success=self._loaded)
+        return self._thumbs.get(url)
+
+    def _loaded(self, result):
+        url, data = result
+        self._loading.discard(url)
+        pixmap = QPixmap()
+        # A missing image is remembered as None, so it isn't retried
+        self._thumbs[url] = pixmap.scaled(THUMB_SIZE, Qt.AspectRatioMode.KeepAspectRatio,
+                                          Qt.TransformationMode.SmoothTransformation) \
+            if data and pixmap.loadFromData(data) else None
+        self.update()
+
+    def _rect(self, index):
+        rect = self._cards[index][0]
+        return rect.translated(0, -12) if index == self._hover and self.mode == "Stacks" else rect
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        font = painter.font()
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(self.palette().text().color())
+        for rect, text in self._headings:
+            text = painter.fontMetrics().elidedText(text, Qt.TextElideMode.ElideRight, rect.width())
+            painter.drawText(rect, Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter, text)
+        # The hovered card is drawn last, so it's on top of its stack
+        order = [i for i in range(len(self._cards)) if i != self._hover] + (
+            [self._hover] if self._hover is not None else [])
+        visible = event.rect().adjusted(0, -40, 0, 40)
+        for i in order:
+            rect, entry = self._rect(i), self._cards[i][1]
+            if not rect.intersects(visible):
+                continue
+            pixmap = self._thumb(thumb_url(entry["image_url"]))
+            if pixmap is not None:
+                painter.drawPixmap(rect.topLeft(), pixmap)
+            else:
+                painter.setPen(QPen(MUTED_COLOR))
+                painter.setBrush(self.palette().base())
+                painter.drawRoundedRect(rect, 8, 8)
+                painter.setPen(self.palette().text().color())
+                painter.drawText(rect.adjusted(8, 6, -8, -6), Qt.AlignmentFlag.AlignTop | Qt.TextFlag.TextWordWrap,
+                                 entry["name"])
+            if entry["quantity"] > 1:
+                badge = QRect(rect.right() - 38, rect.top() + 6, 32, 18)  # on the name bar, which a stack shows
+                painter.setPen(Qt.PenStyle.NoPen)
+                painter.setBrush(QColor(0, 0, 0, 190))
+                painter.drawRoundedRect(badge, 9, 9)
+                painter.setPen(QColor("white"))
+                painter.drawText(badge, Qt.AlignmentFlag.AlignCenter, f"×{entry['quantity']}")
+            if entry["id"] in self.selected:
+                painter.setPen(QPen(self.palette().highlight().color(), 3))
+                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.drawRoundedRect(rect.adjusted(1, 1, -1, -1), 8, 8)
+
+    def _at(self, pos):
+        # The card on top at pos (the hovered one first, as it's drawn last)
+        if self._hover is not None and self._rect(self._hover).contains(pos):
+            return self._hover
+        return next((i for i in reversed(range(len(self._cards))) if self._rect(i).contains(pos)), None)
+
+    def mouseMoveEvent(self, event):
+        index = self._at(event.position().toPoint())
+        if index != self._hover:
+            self._hover = index
+            self.setToolTip(self._cards[index][1]["name"] if index is not None else "")
+            self.update()
+
+    def leaveEvent(self, event):
+        self._hover = None
+        self.update()
+
+    def mousePressEvent(self, event):
+        index = self._at(event.position().toPoint())
+        if index is not None and event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self._cards[index][1]["id"])
+
+    def contextMenuEvent(self, event):
+        index = self._at(event.pos())
+        if index is not None:
+            self.menu_requested.emit(self._cards[index][1]["id"])

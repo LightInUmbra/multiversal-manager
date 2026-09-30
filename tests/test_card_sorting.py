@@ -53,6 +53,24 @@ def test_views_are_remembered_per_list(temp_db):
     view = cs.picked(cs.default("collection"), "Price")
     assert view["descending"]  # price starts high to low
     cs.save("collection", {**view, "group": "Rarity"})
-    assert cs.load("collection", "collection") == {"sort": "Price", "descending": True, "group": "Rarity"}
+    assert cs.load("collection", "collection") == {"sort": "Price", "descending": True, "group": "Rarity",
+                                                     "display": "List"}
     cs.save("list:7", {"sort": "Price", "descending": False, "group": "Condition"})  # not a deck grouping
     assert cs.load("list:7", "deck") == cs.default("deck")
+
+
+def test_each_list_remembers_its_display(temp_db):
+    assert cs.load("list:3", "deck")["display"] == "List"  # the default, and for views saved before displays
+    cs.save("list:3", {**cs.default("deck"), "display": "Stacks"})
+    assert cs.load("list:3", "deck")["display"] == "Stacks"
+    cs.save("list:4", {**cs.default("list"), "display": "Poster"})  # unknown: back to a list
+    assert cs.load("list:4", "list") == cs.default("list")
+
+
+def test_text_columns_balance_their_lines():
+    groups = [("A", [1] * 9), ("B", [1] * 3), ("C", [1] * 3), ("D", [1] * 3)]
+    columns = cs.balance(groups, 2)
+    assert [[t for t, _ in c] for c in columns] == [["A"], ["B", "C", "D"]]
+    assert [t for c in cs.balance(groups, 3) for t, _ in c] == ["A", "B", "C", "D"]  # order kept
+    assert cs.balance(groups, 1) == [groups]
+    assert cs.balance([], 3) == [[]]

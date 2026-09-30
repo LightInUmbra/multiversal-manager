@@ -157,6 +157,7 @@ class PhoneTrends:
                                         on_click=lambda e, label=label: on_pick(label)) for label in labels], spacing=0)
 
         movers = gainers if self.side == "Gainers" else losers
+        cards = [rows[card_id] for card_id, _ in movers]  # swiping on a card's page follows these
         self.body.controls = [
             chart(history, width=width, height=160),
             high_low(history),
@@ -166,7 +167,7 @@ class PhoneTrends:
                          bgcolor=theme.COLORS["surface"], border=ft.Border.all(1, theme.LINE), border_radius=10,
                          padding=ft.Padding.symmetric(horizontal=12, vertical=8)),
             segment(["Gainers", "Losers"], self.side, self.set_side),
-            *([self.row(rows[card_id], change) for card_id, change in movers]
+            *([self.row(cards[i], change, cards, i) for i, (_, change) in enumerate(movers)]
               or [ft.Text(f"No {self.side.lower()} over this period.", italic=True, color=theme.MUTED)]),
             ft.Text(NOTE, size=11.5, color=theme.MUTED),
         ]
@@ -180,7 +181,7 @@ class PhoneTrends:
         self.side = side
         self.fill()
 
-    def row(self, card, change):
+    def row(self, card, change, cards, index):
         finish = " ✦" if card["foil"] else ""
         copies = f" · ×{change.quantity}" if change.quantity > 1 else ""
         return ft.Container(ft.Row([
@@ -191,14 +192,15 @@ class PhoneTrends:
                       spacing=1, expand=True),
             ft.Text(price_changes.format_change(change.total), color=_change_color(change.total)),
         ], spacing=10), padding=ft.Padding.symmetric(horizontal=4, vertical=8),
-            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e: self.open_card(card))
+            border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE)), on_click=lambda e: self.open_card(cards, index))
 
-    def open_card(self, card):
-        index = market.index_of(self.summary, card)
+    def open_card(self, cards, at):
+        # cards[at]'s price page; swiping moves along the movers shown
+        index = market.index_of(self.summary, cards[at])
         if index is None:
             return
         column = self.summary["offsets"].index(dict(market.PERIODS)[self.period])
         self.finance.summary, self.finance.period = self.summary, self.period
-        self.finance.open(market.row(self.summary, index, column))
+        self.finance.open(market.row(self.summary, index, column), (cards, at, lambda to: self.open_card(cards, to)))
         self.view.content = self.finance.view
         self.page.update()
