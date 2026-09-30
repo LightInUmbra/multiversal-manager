@@ -605,6 +605,7 @@ class RulesWindow(QWidget):
                 "<li>Answers <b>worked out from the rules</b> for combat (who can block, what dies, how much "
                 "damage), timing (can I cast, play or activate this now?), state checks (does it die, does a "
                 "player lose, the legend rule) and tokens (how many, through every doubler), step by step</li>"
+                "<li><b>What a keyword or term means</b> (\"How does haste work?\"), from the glossary and its rules</li>"
                 "<li><b>Commander Brackets</b>: which brackets a card fits and whether it's a Game Changer</li>"
                 "<li>The <b>game concepts</b> it involves (the stack, APNAP, layers, combat…), explained</li>"
                 "<li>The <b>cards</b> you name, with their official rulings</li>"
@@ -683,18 +684,20 @@ class RulesWindow(QWidget):
             entry = matches[0][1]
             rule_links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in entry["rules"])
             card = self._answer_card("ANSWER", html.escape(entry["answer"]) + ".",
-                                     f"<p>{link_rules(entry['explanation'])}</p>"
+                                     (f"<p class='muted'>Answering: <i>{html.escape(entry['question'])}</i></p>"
+                                      if found.restated else "")
+                                     + f"<p>{link_rules(entry['explanation'])}</p>"
                                      f"<p class='muted'>From a verified ruling"
                                      f"{' · Rules: ' + rule_links if rule_links else ''}</p>")
         elif worked:
             rule_links = ", ".join(f"<a href='rule:{r}'>{r}</a>" for r in worked.rules)
             # A short why ("Serra Angel has flying…") goes right under the answer; step-by-step combat goes below
-            short = len(worked.steps) <= 3 and not any(s.startswith("<b>") for s in worked.steps)
+            short = worked.short
             # (for a longer one, its last step: what decided it; combat's summary is its verdict)
             combat_steps = any(s.startswith("<b>") for s in worked.steps)
             reasons = "".join(f"<p>{link_rules(s)}</p>" for s in
                               (worked.steps if short else [] if combat_steps else worked.steps[-1:]))
-            card = self._answer_card("WORKED OUT FROM THE RULES", html.escape(worked.verdict) + ".", reasons +
+            card = self._answer_card(worked.heading, html.escape(worked.verdict) + ".", reasons +
                                      "<p class='muted'>" + " · ".join(filter(None, [
                                          html.escape(worked.assumes), rule_links and f"Rules: {rule_links}"])) + "</p>")
         elif matches:

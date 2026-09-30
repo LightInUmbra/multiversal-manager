@@ -196,6 +196,19 @@ def test_a_question_asked_the_other_way_round_is_not_its_answer():
     assert score == 1.0
 
 
+
+def test_a_question_about_other_keywords_is_not_its_answer():
+    library = {"interactions": [
+        {"question": "Can I cast a sorcery from cascade during my opponent's turn?", "answer": "Yes"},
+        {"question": "If both players reach 0 life at the same time, what happens?", "answer": "The game is a draw"}]}
+    keywords = {"cascade": "702.85", "reach": "702.17"}
+    (score, _), = rules.similar_interactions("Can I cast a sorcery on my opponent's turn?", library, keywords=keywords)
+    assert score < 0.45  # cascade changes the answer
+    # "reach 0 life" isn't the keyword
+    [(score, best), *_] = rules.similar_interactions("What happens if both players would lose at the same time?",
+                                                     library, keywords=keywords)
+    assert best["answer"] == "The game is a draw" and score >= 0.45
+
 def test_the_website_reads_its_bundled_rules_until_it_has_its_own(temp_db, tmp_path, monkeypatch):
     from pathlib import Path
     bundle = tmp_path / "rules_bundle"
@@ -207,3 +220,13 @@ def test_the_website_reads_its_bundled_rules_until_it_has_its_own(temp_db, tmp_p
     own.mkdir()
     (own / "cr.txt").write_text("downloaded", encoding="utf-8")
     assert rules.rules_dir() == own and rules.text("cr") == "downloaded"
+
+
+def test_a_yes_or_no_never_answers_an_open_question():
+    import ask
+    cr = rules.parse_cr(CR)
+    library = {"concepts": [], "interactions": [
+        {"topic": "Turns", "question": "Can I play two lands in one turn?", "answer": "No", "explanation": "One a turn.",
+         "rules": ["305.2"]}]}
+    assert ask.look_up("Can I play two lands in one turn?", cr, library, []).kind == "verified"
+    assert ask.look_up("How many lands can I play in one turn?", cr, library, []).kind == "closest"

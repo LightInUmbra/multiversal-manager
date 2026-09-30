@@ -5,6 +5,7 @@ question that follow fixed rules, reading each creature's abilities from its Ora
 
 Combat: who can block whom, and what happens in each combat damage step.
 Commander Brackets: which brackets the cards named fit (see brackets.py).
+Definitions: what a keyword or game term is ("How does haste work?"), from the glossary and its rules.
 No Qt here, so the same logic can move to the website and mobile app.
 """
 import re
@@ -121,6 +122,14 @@ class Worked:
     steps: list          # what happens, in order
     rules: list          # the rules it used, in order
     assumes: str = "It assumes nothing else changes things: no tricks, other permanents or effects."
+    heading: str = "WORKED OUT FROM THE RULES"
+    in_full: bool = False  # every step goes in the answer card, however many (a definition's rules)
+
+    @property
+    def short(self):
+        # Shown in full in the answer card; a longer one lists its steps below it, and combat's
+        # steps (with <b> titles) always go below
+        return self.in_full or (len(self.steps) <= 3 and not any(s.startswith("<b>") for s in self.steps))
 
 
 class _Rules(list):
@@ -494,7 +503,7 @@ def answer_combat(question, cards):
 # Timing: can I cast, play or activate this now?
 
 _CAN = re.compile(r"\bcan(?:'t| not)? (?:i|you|we|my opponents?|an opponent|the opponent|opponents|they|he|she|"
-                  r"a player|players|someone|anyone)\b")
+                  r"a player|players|someone|anyone|(?:a|my|the|this|that) creature|creatures|it)\b")
 _BY_OPPONENT = re.compile(r"\bcan(?:'t| not)? (?:my opponents?|an opponent|the opponent|opponents|they|he|she)\b")
 _PART_OF_TURN = r"(?:turn|(?:first |second |precombat |postcombat )?main phase|upkeep|draw step|end step|combat)\b"
 _THEIR_TURN = re.compile(r"\b(?:(?:my |an |the )?opponents?'?s?|their|his|her|someone else's|another player's) "
@@ -668,10 +677,12 @@ def _answer_timing(question, cards):
     rules = _Rules()
     rest = lower[can.end():]
 
-    # Cast while another spell resolves (cascade, discover): the timing rules don't apply
-    if re.match(r"\s*cast\b", rest) and re.search(r"\b(?:cascade|discover|cascading)\b", lower):
-        rules.use("608.2g", "702.85a")
-        return Worked("Yes", ["A spell you cast while another spell or ability is resolving (like cascade) ignores the "
+    # Cast while another spell or ability resolves (cascade, discover, madness's trigger): the
+    # timing rules don't apply
+    if re.match(r"\s*cast\b", rest) and (resolving := re.search(r"\b(cascade|discover|cascading|madness)\b", lower)):
+        rules.use("608.2g", "702.35a" if resolving[1] == "madness" else "702.85a")
+        how = "madness's trigger" if resolving[1] == "madness" else "cascade"
+        return Worked("Yes", [f"A spell you cast while another spell or ability is resolving (like {how}) ignores the "
                               "normal timing rules, so even a sorcery can be cast then, on any player's turn."],
                       list(rules), "")
     # "In response to" something that doesn't use the stack
@@ -684,7 +695,8 @@ def _answer_timing(question, cards):
     # Responding to something that doesn't use the stack
     if respond := re.match(r"\s*respond (?:to )?(.*)", rest):
         inner = respond.group(1)
-        if re.search(r"\bplay(?:s|ing)? (?:a |the |their |my |his |her )?land\b|\bland drop\b", inner):
+        if re.search(r"\bplay(?:s|ing)? (?:a |the |their |my |his |her )?land\b|\bland drop\b"
+                     r"|\bland (?:being|is|was|getting) played\b", inner):
             rules.use("305.1", "116.2a")
             return Worked("No", ["Playing a land is a special action: it doesn't use the stack, so there's nothing "
                                  "to respond to."], list(rules), "")
@@ -693,7 +705,9 @@ def _answer_timing(question, cards):
             return Worked("No", ["Turning a face-down creature face up is a special action: it doesn't use the "
                                  "stack, so there's nothing to respond to. Players can respond to anything that "
                                  "triggers when it's turned face up."], list(rules), "")
-        if re.search(r"\bfor mana\b|\bmana abilit", inner):
+        # Responding *to* a mana ability ("…with a mana ability" is a way of responding, not what to)
+        if re.match(r"(?:(?:a|an|the|my|their|his|her|someone's|an opponent's) )?(?:\w+ )?(?:mana abilit|\w+ for mana)",
+                    inner):
             rules.use("605.3b")
             return Worked("No", ["Mana abilities don't use the stack; they resolve immediately."], list(rules), "")
         return None
@@ -880,6 +894,11 @@ def _player_state(lower, cards=None):
             steps.append(f"A player loses at 0 or less life; {amount} is above that.")
             return Worked("No", steps, list(rules), _STATE_NOTE)
         steps.append("A player with 0 or less life loses the game the next time state-based actions are checked.")
+        if re.search(r"\b(?:both|all|every|each) (?:of the )?players?\b|\beveryone\b", lower):
+            rules.use("104.4a")
+            steps.append("They all lose at the same time, and when every player remaining loses simultaneously, the "
+                         "game is a draw.")
+            return Worked("No one wins: the game is a draw", steps, list(rules), _STATE_NOTE)
         if re.search(r"\brespon\w*|\bgain\w* life\b|\bbefore\b|\bin time\b", lower):
             rules.use("117.5")
             steps.append("State-based actions are checked before any player gets priority, so nobody can respond "
@@ -902,7 +921,8 @@ def _legend_rule(lower, cards):
         return Worked("No", ["The legend rule only applies to legendary permanents with the same name."],
                       list(rules), "")
     if re.search(r"\b(?:each|both) control|\bmy opponent (?:also )?(?:controls?|has)\b|\b(?:an|the) opponent "
-                 r"(?:controls?|has)\b|\bone each\b", lower):
+                 r"(?:controls?|has)\b|\bone each\b|\b(?:two|different|both|two different) players\b|\bplayers' "
+                 r"|\banother player\b|\bopponent's (?:copy|legend)|\bwe both\b|\beach (?:have|has)\b", lower):
         return Worked("No", ["The legend rule only applies when one player controls two or more legendary "
                              "permanents with the same name. Each player can have their own."], list(rules), "")
     rules.use("700.4")
@@ -1210,3 +1230,73 @@ def answer_tokens(question, cards):
         steps.append(line + f". That would make {total + more:,} tokens made this turn in all.")
     return Worked(verdict, steps, list(rules), "It counts the replacement effects of the cards you name; any "
                   "others you control would change the count.")
+
+
+# Definitions
+
+_DEFINITION = re.compile(r"(?:how (?:does|do) (?P<a>.+?) work|what (?:is|are|does|do) (?P<b>.+?)(?: do| mean)?"
+                         r"|what's (?P<c>.+?)(?: do| mean)?|(?:explain|define) (?P<d>.+?))\s*[?.!]*", re.IGNORECASE)
+_SEE = re.compile(r"\s*See (?:also )?rules? .*$")
+# A keyword's rules that say nothing about what it does
+_EMPTY_RULE = re.compile(r" is an? (?:static|triggered|activated|spell) ability\.$|are redundant\.$|^\S+ is a keyword action\.$")
+
+
+_DIFFERENCE = re.compile(r"(?:what(?:'s| is) )?the difference between (?P<x>.+?) and (?P<y>.+?)\s*[?.!]*", re.IGNORECASE)
+_DEFINITION_NOTE = "This is what the rules say; how it plays out depends on the cards involved."
+
+
+def _term(text):
+    return text.strip().lower()
+
+
+def _define(term, cr):
+    """(the term as the rules name it, its definition, [its keyword rules], [rule refs]) for
+    a keyword or glossary term, or None. Found as asked, singular or plural, or as the one
+    glossary entry it starts ("summoning sickness" is the Summoning Sickness Rule)"""
+    glossary = {name.lower(): (name, text) for name, text in cr.glossary}
+    keywords = cr.keywords()
+    # As asked, then without "a"/"the"/"to" ("the stack", but "The Ring Tempts You" and
+    # "For Mirrodin!" as named), singular or plural
+    bare = re.sub(r"^(?:an?|the|to) ", "", term)
+    forms = [term, term + "!", bare, bare[:-1] if bare.endswith("s") else bare + "s"]
+    word = next((w for w in forms if w in glossary or w in keywords), None)
+    term = bare
+    if word is None:
+        starting = [name for name in glossary if name.startswith((term + " ", term + ","))]
+        word = starting[0] if len(starting) == 1 else None
+    if word is None:
+        return None
+    name, definition = glossary.get(word, (word.capitalize(), ""))
+    if (see := re.fullmatch(r"See (?!rules? )([^.]+)\.?", definition.strip())) and see[1].lower() != word:
+        return _define(see[1].lower(), cr)  # "APNAP Order: See Active Player, Nonactive Player Order."
+    rule_id = keywords.get(word)
+    said = [r for r in cr.chapter(rule_id[:3]).rules if re.fullmatch(rf"{re.escape(rule_id)}[a-z]", r.id)
+            and not _EMPTY_RULE.search(r.text)] if rule_id else []
+    meaning = _SEE.sub("", definition).strip() or (said[0].text if said else "")
+    if not meaning:
+        return None
+    meaning = re.sub(r"\.(”?)$", r"\1", meaning)  # the answer card adds the period
+    refs = [rule_id] if rule_id else re.findall(r"\b\d{3}(?:\.\d+[a-z]?)?\b", definition)
+    return name, meaning, [f"{r.id} {r.text}" for r in said], refs
+
+
+def answer_definition(question, cr):
+    """What a keyword or glossary term is, for a question that only asks that ("How does
+    haste work?", "What is ward?"), or how two differ ("What's the difference between
+    destroy and sacrifice?"), or None: the glossary definitions, then what their keyword
+    rules say they do"""
+    if cr is None:
+        return None
+    if two := _DIFFERENCE.fullmatch(question.strip()):
+        found = [_define(_term(two["x"]), cr), _define(_term(two["y"]), cr)]
+        if None in found:
+            return None
+        steps = [line for name, meaning, said, _ in found for line in (f"{name}: {meaning}.", *said)]
+        return Worked(f"{found[0][0]} vs. {found[1][0]}", steps, [r for *_, refs in found for r in refs],
+                      _DEFINITION_NOTE, heading="DEFINITIONS", in_full=True)
+    asked = _DEFINITION.fullmatch(question.strip())
+    found = asked and _define(_term(next(g for g in asked.groups() if g)), cr)
+    if not found:
+        return None
+    _, meaning, said, refs = found
+    return Worked(meaning, said, refs, _DEFINITION_NOTE, heading="DEFINITION", in_full=True)

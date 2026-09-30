@@ -17,7 +17,7 @@ import set_notes
 
 MUTED = ft.Colors.ON_SURFACE_VARIANT
 RULE_REF = re.compile(r"\b(\d{3}\.\d+[a-z]?|\d{3}(?=\b(?!\.\d)))\b")
-HEADINGS = {"verified": "ANSWER", "worked": "WORKED OUT FROM THE RULES",
+HEADINGS = {"verified": "ANSWER",  # a worked-out answer has its own (judge.Worked.heading)
             "closest": "CLOSEST VERIFIED RULING", "none": "NO VERIFIED ANSWER YET"}
 
 
@@ -235,11 +235,13 @@ class Rules:
             entry = matches[0][1]
             verdict, rule_refs = entry["answer"] + ".", entry["rules"]
             body = [self.rich(entry["explanation"]), ft.Text("From a verified ruling", size=12, color=MUTED)]
+            if found.restated:
+                body.insert(0, ft.Text(spans=[ft.TextSpan("Answering: ", ft.TextStyle(color=MUTED)),
+                                              ft.TextSpan(entry["question"], ft.TextStyle(italic=True))]))
         elif kind == "worked":
             verdict, rule_refs = worked.verdict + ".", worked.rules
-            short = len(worked.steps) <= 3 and not any(s.startswith("<b>") for s in worked.steps)
             combat = any(s.startswith("<b>") for s in worked.steps)
-            body = [self.rich(_plain(s)) for s in (worked.steps if short else [] if combat else worked.steps[-1:])]
+            body = [self.rich(_plain(s)) for s in (worked.steps if worked.short else [] if combat else worked.steps[-1:])]
             if worked.assumes:
                 body.append(ft.Text(_plain(worked.assumes), size=12, color=MUTED))
         elif kind == "closest":
@@ -257,12 +259,13 @@ class Rules:
                             + " The sections below gather the guides, cards and rules for it.")]
         if rule_refs:
             body.append(self.rich("Rules: " + ", ".join(rule_refs), size=12, color=MUTED))
-        answer = _box([ft.Text(HEADINGS[kind], size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.PRIMARY),
+        heading = worked.heading if kind == "worked" else HEADINGS[kind]
+        answer = _box([ft.Text(heading, size=12, weight=ft.FontWeight.BOLD, color=ft.Colors.PRIMARY),
                        *([ft.Text(verdict, size=22, weight=ft.FontWeight.BOLD)] if verdict else []), *body],
                       ft.Colors.PRIMARY_CONTAINER if kind in ("verified", "worked") else ft.Colors.SURFACE_CONTAINER_HIGH)
 
         sections = []
-        if worked and kind != "verified" and not (len(worked.steps) <= 3 and not any(s.startswith("<b>") for s in worked.steps)):
+        if worked and kind != "verified" and not worked.short:
             sections.append(("How it was worked out", [self._step(s) for s in worked.steps]))
         others = matches if worked and not found.verified else matches[1:]
         if others:

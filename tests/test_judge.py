@@ -248,3 +248,37 @@ def test_token_replacement_effects():
     assert worked.verdict == "8 tokens: 2 Treasure tokens and 6 1/1 green Squirrel creature tokens"
     assert "would give 4" in worked.steps[-1]
     assert tokens("How many tokens does Doubling Season make?") is None
+
+
+def test_definitions():
+    import rules
+    from test_rules import CR
+    # The glossary gets entries its fixture doesn't have (its last "Credits" ends the glossary)
+    cr = rules.parse_cr(CR.replace("\nCredits\n\nLead", """
+Active Player, Nonactive Player Order
+A system that determines the order by which players make choices at the same time. See rule 101.4.
+
+APNAP Order
+See Active Player, Nonactive Player Order.
+
+Summoning Sickness Rule
+Informal term for a player's inability to attack with a creature they haven't controlled since their turn began.
+
+Credits
+
+Lead""", 1))
+    worked = judge.answer_definition("How does cascade work?", cr)
+    assert worked.verdict == "A keyword ability" and worked.rules == ["702.85"] and worked.heading == "DEFINITION"
+    assert worked.short  # all its rules go in the answer card
+    assert worked.steps == ["702.85a Cascade is a triggered ability that functions only while the spell with cascade is on "
+                            "the stack."]
+    assert judge.answer_definition("what is absorb", cr).verdict == "A keyword ability that prevents damage"
+    assert judge.answer_definition("What does flying do?", cr).rules == ["702.9"]  # no glossary entry, but a keyword
+    assert judge.answer_definition("Can Grizzly Bears block a creature with flying?", cr) is None
+    assert judge.answer_definition("What is Lightning Bolt?", cr) is None
+    # The one glossary entry it starts, and "See …" followed
+    assert judge.answer_definition("What is summoning sickness?", cr).verdict.startswith("Informal term")
+    assert judge.answer_definition("What is APNAP?", cr).verdict.startswith("A system that determines")
+    both = judge.answer_definition("What's the difference between absorb and cascade?", cr)
+    assert both.verdict == "Absorb vs. Cascade" and both.heading == "DEFINITIONS"
+    assert both.steps[0] == "Absorb: A keyword ability that prevents damage."

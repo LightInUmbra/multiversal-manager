@@ -23,6 +23,7 @@ import re
 from collections import Counter
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
+from functools import lru_cache
 from pathlib import Path
 
 import requests
@@ -477,7 +478,8 @@ _TOKEN = re.compile(r"[a-z0-9+/'-]+")
 _QUESTION_STOPWORDS = {"a", "an", "the", "of", "to", "and", "or", "it", "its", "is", "are", "in", "on", "with",
                        "if", "i", "my", "me", "you", "your", "can", "do", "does", "what", "when", "how", "that",
                        "this", "be", "for", "at", "as", "by", "from", "then", "will", "would", "happens", "have",
-                       "has", "there", "one", "they", "their", "card", "cards", "creature", "creatures"}
+                       "has", "there", "one", "they", "their", "card", "cards", "creature", "creatures",
+                       "just", "still", "also", "even", "really", "actually", "ever"}
 
 
 @dataclass
@@ -501,6 +503,7 @@ _EVERYDAY_WORDS = {
 }
 
 
+@lru_cache(maxsize=1 << 16)  # every card name, every question
 def _plain(text):
     # "Kaya, Geist Hunter's" -> "kaya geist hunters": names as people type them
     return re.sub(r"\s+", " ", re.sub(r"[,'’]", "", text.lower()))
@@ -531,7 +534,7 @@ def mentioned_cards(question, names, rules_terms=()):
         if " " in form and not set(plain.split()) <= _EVERYDAY_WORDS:
             hit = plain in plain_question and re.search(rf"(?<!\w){re.escape(plain)}s?(?!\w)", plain_question)
         else:   # "Liliana's" counts; "Iron" in "Iron's-Edge" doesn't
-            hit = re.search(rf"(?<![\w']){re.escape(form)}(?!\w|'(?!s\b))", question)
+            hit = form in question and re.search(rf"(?<![\w']){re.escape(form)}(?!\w|'(?!s\b))", question)
         if hit and not any(plain in longer for longer in matched):
             found.append(name)
             matched.append(plain)
@@ -673,25 +676,94 @@ def guides_for(text, library):
     return [by_title[title] for title in titles if title in by_title]
 
 
+# How players write keywords, as the rules do
+_SHORTHAND = [(re.compile(r"\bfl[iy]ers?\b"), "flying"), (re.compile(r"\btramplers?\b"), "trample"),
+              (re.compile(r"\b(first|double)[- ]strikers?\b"), r"\1 strike"),
+              (re.compile(r"\b(?:steal|steals|stole|stolen|stealing)\b"), "gain control of"),
+              (re.compile(r"\bbounc(?:e|es|ed|ing)\b"), "return to its owner's hand"),
+              (re.compile(r"\bfloat(?:s|ed|ing)? mana\b|\bmana float(?:s|ed|ing)?\b"), "unspent mana"),
+              (re.compile(r"\bfetch(?:es|ed|ing)? (?:a |my |the )?(?:basic )?lands?\b"), "put a land onto the battlefield"),
+              *((re.compile(rf"\b{digit}\b(?![/+-]|\d)"), word) for digit, word in
+                (("2", "two"), ("3", "three"), ("4", "four"), ("5", "five"), ("6", "six"), ("7", "seven"),
+                 ("8", "eight"), ("9", "nine"), ("10", "ten")))]
+# Word forms the endings below don't bring together
+_IRREGULAR = {"dies": "die", "died": "die", "dying": "die", "lost": "lose", "dealt": "deal", "chose": "choose",
+              "chosen": "choose", "paid": "pay", "spent": "spend", "drew": "draw", "drawn": "draw"}
+
+
+def _shorthand(text):
+    for pattern, written in _SHORTHAND:
+        text = pattern.sub(written, text)
+    return text
+
+
+def _stem(word):
+    # "blocked", "blocking" and "blocks" -> "block"; "copies" -> "copy"; "tapped" -> "tap"
+    if word in _IRREGULAR:
+        return _IRREGULAR[word]
+    if word.endswith("ies") and len(word) > 4:
+        word = word[:-3] + "y"
+    elif word.endswith("s") and not word.endswith(("ss", "us", "is")) and len(word) > 3:
+        word = word[:-1]
+    for suffix in ("ing", "ed"):
+        if word.endswith(suffix) and len(word) - len(suffix) >= 4:
+            word = word[:-len(suffix)]
+            if word[-1] == word[-2] and word[-1] not in "ls":  # "tapp" -> "tap", not "kill" -> "kil"
+                word = word[:-1]
+            break
+    return word[:-1] if word.endswith("e") and len(word) > 4 else word
+
+
 def _content_words(text):
-    return {w for w in _TOKEN.findall(text.lower()) if w not in _QUESTION_STOPWORDS and len(w) > 2}
+    return {_stem(w) for w in _TOKEN.findall(_shorthand(text.lower()))
+            if w not in _QUESTION_STOPWORDS and len(w) > 2}
 
 
 # "Without reach" and "with reach" share every other word, so a word negated in one question
 # and plainly there in the other means they ask opposite things. (A negation that just describes
 # the situation, like "it wasn't blocked", clashes with nothing when the other doesn't mention it.)
-_NEGATED_WORD = re.compile(r"\b(?:not|no|without|never|cannot|\w+n't)\s+(?:(?:a|an|the|have|has|be|any)\s+)?([a-z0-9+/-]+)")
+_NEGATED_WORD = re.compile(r"\b(?:not|no|without|never|cannot|\w+n't)\s+(?:(?:a|an|the|have|has|be|any)\s+)?"
+                           r"(?:(?:paying|using|having|getting)\s+(?:the\s+|its\s+|any\s+|a\s+)?)?([a-z0-9+/-]+)")
 # How much a question asked the other way round counts: never enough to be given as its answer
 NEGATION_MISMATCH = 0.4
+# How much a question about other keywords counts: enough to be the closest ruling, rarely its answer
+KEYWORD_MISMATCH = 0.5
 
 
+# "without flying or reach" negates both; "noncombat" is "not combat"
+_NEGATED_LIST = re.compile(r"\b(?:not|no|without|never)\s+(?:a |an |the )?[a-z0-9+/-]+\s+(?:or|nor|and)\s+([a-z0-9+/-]+)")
+_NON = re.compile(r"\bnon-?([a-z]{3,})")
+_WITHOUT_PAYING = re.compile(r"\bwithout paying (?:the |its |any |a |my |your )?(?:[a-z]+ )?([a-z]+)")  # "…commander tax"
+# Asking whether something stops, prevents or saves turns the answer round: "Does indestructible
+# stop sacrifice?" is No where "Can I sacrifice an indestructible creature?" is Yes
+_STOPS = re.compile(r"\b(?:stop|stops|stopped|prevent|prevents|prevented|protect|protects|save|saves|saved|"
+                    r"skip|skips|skipped)\b")
+# How many, and which card types: "if one creature attacks alone" isn't "if two attack", and
+# prowess on instants isn't prowess on creature spells. Only told apart when both say.
+_COUNTS = re.compile(r"\b(two|three|four|five|six|seven|eight|nine|ten|single|alone|both|several|multiple)\b")
+_NOT_A_COUNT = re.compile(r"\b(?:more than|at least|fewer than|less than|up to) \w+")  # "more than one copy"
+_TYPES = re.compile(r"\b(instant|sorcer|creature|artifact|enchantment|aura|equipment|land|planeswalker|battle|token)")
+
+
+def _told_apart(pattern, question, other):
+    asked, theirs = (set(pattern.findall(_NOT_A_COUNT.sub(" ", text.lower()))) for text in (question, other))
+    return bool(asked and theirs and not asked & theirs)
+
+
+# The library's side of matching is the same for every question, so each ruling's text is
+# worked through once (cached by text) rather than on every question
+_TEXTS = 4096
+
+
+@lru_cache(maxsize=_TEXTS)
 def _negations(text):
     # (words negated in text, words it has plainly)
-    text = text.lower().replace("’", "'")
-    negated = set(_NEGATED_WORD.findall(text))
-    plain = _content_words(_NEGATED_WORD.sub(" ", text))
+    text = _shorthand(text.lower().replace("’", "'"))
+    negated = {_stem(w) for w in [*_NEGATED_WORD.findall(text), *_NEGATED_LIST.findall(text), *_NON.findall(text),
+                                  *_WITHOUT_PAYING.findall(text)]}
+    plain = _content_words(_NON.sub(" ", _NEGATED_WORD.sub(" ", _NEGATED_LIST.sub(" ", _WITHOUT_PAYING.sub(" ", text)))))
     # A word it has both ways ("with flying … doesn't have flying") takes no side
-    return negated - plain, plain - negated
+    return frozenset(negated - plain), frozenset(plain - negated)
 
 
 def _asked_the_other_way(question, other):
@@ -699,27 +771,78 @@ def _asked_the_other_way(question, other):
     return bool(negated_q & plain_o or negated_o & plain_q)
 
 
-def similar_interactions(question, library, limit=3, threshold=0.25):
+_REACH_A_NUMBER = re.compile(r"\breach(?:es|ed|ing)? (?:\d+|zero|one|ten)\b")  # "reach 0 life" isn't reach
+
+
+@lru_cache(maxsize=_TEXTS)
+def _keywords_in(text, pattern):
+    return frozenset(pattern.findall(_REACH_A_NUMBER.sub(" ", _shorthand(text.lower())))) if pattern else frozenset()
+
+
+def _mine(text):
+    # "my own creature" (or "a planeswalker I control?") isn't any creature: whose it is can
+    # decide the answer. "I control a permanent with…" just sets the scene.
+    return bool(re.search(r"\bown\b|\b(?:i|you) control\s*(?:[?,.;]|$)", text.lower()))
+
+
+@lru_cache(maxsize=_TEXTS)
+def _matching_words(text):
+    return frozenset(_content_words(text) | {f"concept:{c}" for c in concepts_in(text)})
+
+
+@lru_cache(maxsize=_TEXTS)
+def _pairs(text):
+    # Words in order: what tells "two creatures block one attacker" from "one creature blocks two attackers"
+    stems = [_stem(w) for w in _TOKEN.findall(_shorthand(text.lower()))]
+    return frozenset(zip(stems, stems[1:]))
+
+
+@lru_cache(maxsize=16)
+def _keyword_pattern(keywords):
+    # The keywords worth telling questions apart by (keywords: sorted (keyword, rule id) pairs)
+    named = sorted((k for k, rule_id in keywords if rule_id.startswith("702") or k not in _COMMON_ACTIONS),
+                   key=len, reverse=True)
+    return re.compile(rf"\b({'|'.join(map(re.escape, named))})(?:s|es)?\b") if named else None  # "partners"
+
+
+def similar_interactions(question, library, limit=3, threshold=0.25, keywords=()):
     """The library's verified interactions closest to a question: [(score 0-1, entry)],
     best first. Words they share count by how rare they are in the library ("ninjutsu"
     says more than "attack"), and so do game concepts they share. A question asked the
-    other way round ("without reach" for "with reach") counts for half."""
+    other way round ("without reach" for "with reach", "my own" for anyone's) counts for
+    less, and so does one about other keywords (keywords from ComprehensiveRules.keywords()):
+    a sorcery cast with cascade isn't a sorcery cast on its own. An entry's "also" lists
+    other ways the question is asked, for ones shared words can't tell apart ("two creatures
+    block one attacker" isn't "one creature blocks two attackers"); the closest one counts."""
     entries = library["interactions"]
-    words_of = [_content_words(e["question"]) | {f"concept:{c}" for c in concepts_in(e["question"])}
-                for e in entries]
-    counts = Counter(w for words in words_of for w in words)
+    pattern = _keyword_pattern(tuple(sorted(dict(keywords).items())))
+    asked_keywords = _keywords_in(question, pattern)
+    phrasings = [[(text, _matching_words(text)) for text in [e["question"], *e.get("also", [])]] for e in entries]
+    counts = Counter(w for ways in phrasings for w in set().union(*(ws for _, ws in ways)))
     idf = {w: math.log((len(entries) + 1) / n) + 0.5 for w, n in counts.items()}
-    asked = _content_words(question) | {f"concept:{c}" for c in concepts_in(question)}
+    asked = _matching_words(question)
     asked_weight = sum(idf.get(w, math.log(len(entries) + 1) + 0.5) for w in asked) or 1
+
+    def score(text, text_words):
+        shared = sum(idf[w] for w in asked & text_words)
+        value = shared / math.sqrt(asked_weight * sum(idf[w] for w in text_words))
+        if (_asked_the_other_way(question, text) or _mine(question) != _mine(text)
+                or bool(_STOPS.search(question.lower())) != bool(_STOPS.search(text.lower()))
+                or _told_apart(_COUNTS, question, text) or _told_apart(_TYPES, question, text)):
+            value *= NEGATION_MISMATCH
+        if asked_keywords != _keywords_in(text, pattern):
+            value *= KEYWORD_MISMATCH
+        return value
+
+    asked_pairs = _pairs(question)
     scored = []
-    for entry, words in zip(entries, words_of):
-        shared = sum(idf[w] for w in asked & words)
-        score = shared / math.sqrt(asked_weight * sum(idf[w] for w in words))
-        if _asked_the_other_way(question, entry["question"]):
-            score *= NEGATION_MISMATCH
-        if score >= threshold:
-            scored.append((round(score, 2), entry))
-    return sorted(scored, key=lambda s: -s[0])[:limit]
+    for entry, ways in zip(entries, phrasings):
+        best = max(score(text, text_words) for text, text_words in ways)
+        if best >= threshold:
+            order = max(len(asked_pairs & _pairs(text)) for text, _ in ways)
+            scored.append((round(best, 2), order, entry))
+    # Equal scores go to the one sharing the most word pairs
+    return [(value, entry) for value, _, entry in sorted(scored, key=lambda s: (-s[0], -s[1]))][:limit]
 
 
 # Rules terms cards have in common

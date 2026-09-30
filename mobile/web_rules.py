@@ -198,7 +198,7 @@ class RulesPage(rules_tab.Rules):
                            spacing=12)]
         if found is None:
             top.append(_muted("You'll get a verified ruling when one matches, or an answer worked out from the rules "
-                              "for combat, timing and state checks, then the guides, cards and rules behind it. No AI: "
+                              "for combat, timing, state checks and what a keyword means, then the guides, cards and rules behind it. No AI: "
                               "every answer is a checked ruling or the official text.", 13))
         self.show("Ask a Rules Question", top + (self.answer_controls(found) if found else []))
 
