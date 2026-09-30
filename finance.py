@@ -26,17 +26,13 @@ import scryfall
 import trends
 from card_image import CardImage
 from charts import HistoryChart
+import market
+from market import (  # shared with the website's Finance page  # noqa: F401
+    CHANGE_COL, COLUMNS, FINISH_COL, FINISH_LABELS, NAME_COL, NUMBER_COL, PERCENT_COL, PRICE_COL, RARITY_COL,
+    SET_COL, SHOW_ALL, SHOW_DROPS, SHOW_SPIKES, change_for, watch_records,
+)
 
 BAREBONES, POPULATED = "barebones", "populated"
-
-COLUMNS = ["Card", "Set", "#", "Finish", "Rarity", "Price", "Change", "Change %"]
-(NAME_COL, SET_COL, NUMBER_COL, FINISH_COL, RARITY_COL, PRICE_COL, CHANGE_COL,
- PERCENT_COL) = range(len(COLUMNS))
-
-SHOW_SPIKES, SHOW_DROPS, SHOW_ALL = "Biggest spikes", "Biggest drops", "Everything"
-
-FINISHES = scryfall.PRICE_KEYS
-FINISH_LABELS = {0: "", 1: "Foil", 2: "Etched"}
 
 # MTGJSON's history is re-read this often, filling in days the app wasn't opened
 BACKFILL_EVERY = timedelta(days=7)
@@ -62,38 +58,11 @@ def _printings(n):
     return f"{n:,} printing{'s' if n != 1 else ''}"
 
 
-def watch_records(data):
-    # Watchlist records for a raw Scryfall card dict, one per finish it's printed in
-    prices = data.get("prices") or {}
-    card = scryfall.Card(data)
-    return [{
-        "scryfall_id": card.id,
-        "foil": code,
-        "name": card.name,
-        "set_code": card.set,
-        "set_name": card.set_name,
-        "collector_number": card.collector_number,
-        "rarity": card.rarity,
-        "image_url": scryfall.image_url_for(card),
-        "price": float(prices[key]) if prices.get(key) else None,
-        "artist": card.artist,
-        "released_at": card.released_at,
-    } for finish, (code, key) in FINISHES.items() if finish in card.finishes]
-
-
 def _printing_rank(data):
     # Which printing stands for a card in the card list: a regular booster printing
     # over promos and variants, newest first
     return (not data.get("promo"), bool(data.get("booster")), not data.get("variation"),
             data.get("released_at") or "")
-
-
-def change_for(row):
-    # (each, percent) since the period's start, or None without a price then and now
-    if not row["past"] or not row["price"]:
-        return None
-    each = row["price"] - row["past"]
-    return each, each / row["past"] * 100
 
 
 def backfill_due(last_backfill, today=None):
@@ -183,34 +152,10 @@ class WatchlistModel(QAbstractTableModel):
         self.sort_column, self.sort_order = column, order
         self._update()
 
-    def _accepts(self, entry):
-        row, change = entry
-        if (row["price"] or 0.0) < self.min_price:
-            return False
-        if self.show == SHOW_SPIKES and (change is None or change[0] <= 0.004):
-            return False
-        if self.show == SHOW_DROPS and (change is None or change[0] >= -0.004):
-            return False
-        return not self.text or self.text in f"{row['name']} {row['set_name']} {row['set_code']}".lower()
-
-    def _sort_key(self, entry):
-        row, change = entry
-        column = self.sort_column
-        if column >= CHANGE_COL:
-            return change[column - CHANGE_COL] if change else 0.0
-        if column == PRICE_COL:
-            return row["price"] or 0.0
-        if column == NUMBER_COL:
-            number = row["collector_number"] or ""
-            return (int(number) if number.isdigit() else 0, number)
-        if column == FINISH_COL:
-            return row["foil"]
-        return (row[["name", "set_name", "", "", "rarity"][column]] or "").casefold()
-
     def _update(self):
         self.beginResetModel()
-        self.rows = sorted(filter(self._accepts, self.all_rows), key=self._sort_key,
-                           reverse=self.sort_order == Qt.SortOrder.DescendingOrder)
+        self.rows = market.shown(self.all_rows, self.text, self.min_price, self.show, self.sort_column,
+                                 self.sort_order == Qt.SortOrder.DescendingOrder)
         self.endResetModel()
 
     def rowCount(self, parent=QModelIndex()):

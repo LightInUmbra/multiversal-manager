@@ -96,8 +96,13 @@ class ImportResult:
 def parse_file(path):
     # (rows, errors). utf-8-sig strips the byte-order mark Excel likes to add.
     with open(path, encoding="utf-8-sig", newline="") as f:
-        text = f.read()
-    if path.lower().endswith(".csv") or _looks_like_csv(text):
+        return parse(f.read(), path)
+
+
+def parse(text, file_name=""):
+    """(rows, errors) for a file's contents; file_name only tells a .csv apart. The website
+    reads files in the browser, so it has the text but no path."""
+    if file_name.lower().endswith(".csv") or _looks_like_csv(text):
         return parse_csv(text)
     return parse_text(text)
 
@@ -331,3 +336,90 @@ def card_records(result):
     # add_card keyword dicts for every matched row
     return [{**scryfall.card_record(card, foil=row.foil, quantity=row.quantity), **row.details()}
             for row, card in result.matched]
+
+
+# Reviewing an import before it's saved: the desktop's Review Import dialog
+# (import_review_dialog.py) and the website's (mobile/web_import.py) both show these
+
+def count(n, word):
+    # "1 entry", "3 entries", "1,204 cards"
+    plural = word[:-1] + "ies" if word.endswith("y") else word + "s"
+    return f"{n:,} {word if n == 1 else plural}"
+
+
+# Entry states
+EXACT = "exact"           # the file named this exact printing
+UNSPECIFIED = "unspecified"  # the file only gave a name (or name + set)
+FELL_BACK = "fell_back"   # the file's printing wasn't found; matched by name instead
+CHOSEN = "chosen"         # the user picked the printing here
+NOT_FOUND = "not_found"
+
+STATUS_TEXT = {
+    EXACT: "✓ Printing from file",
+    UNSPECIFIED: "⚠ Choose printing (file didn't say which)",
+    FELL_BACK: "⚠ Choose printing (file's printing not found)",
+    CHOSEN: "✓ Chosen",
+    NOT_FOUND: "✗ Not found on Scryfall",
+}
+NEEDS_REVIEW = {UNSPECIFIED, FELL_BACK}
+
+
+@dataclass
+class ReviewEntry:
+    row: object
+    card: object = None
+    state: str = NOT_FOUND
+    foil: int = 0  # finish code: 0 non-foil, 1 foil, 2 etched
+    price: float = None  # None = Scryfall's price for the printing + finish
+    quantity: int = 1
+    include: bool = True
+
+    def record(self):
+        return {**scryfall.card_record(self.card, foil=self.foil, quantity=self.quantity, price=self.price),
+                **self.row.details()}
+
+
+def build_entries(result):
+    # One ReviewEntry per file row, entries that need a decision first
+    fell_back = {id(row) for row, _ in result.approximate}
+    entries = []
+    for row, card in result.matched:
+        if id(row) in fell_back:
+            state = FELL_BACK
+        elif row.scryfall_id or (row.set_code and row.collector_number):
+            state = EXACT
+        else:
+            state = UNSPECIFIED
+        entries.append(ReviewEntry(row, card, state, row.foil, None, row.quantity))
+    entries += [ReviewEntry(row, None, NOT_FOUND, row.foil, None, row.quantity, include=False)
+                for row in result.unmatched]
+    order = {FELL_BACK: 0, UNSPECIFIED: 1, NOT_FOUND: 2, EXACT: 3}
+    entries.sort(key=lambda e: (order[e.state], e.row.line))
+    return entries
+
+
+def review_summary(entries):
+    """(what the review found, as plain sentences; the import button's label) for the entries"""
+    needs_review = sum(e.state in NEEDS_REVIEW for e in entries)
+    not_found = sum(e.state == NOT_FOUND for e in entries)
+    text = f"{len(entries):,} entries in the file."
+    if needs_review:
+        text += (f" {needs_review:,} need a printing chosen: the file didn't say which printing you own (or "
+                 "named one Scryfall doesn't have), so a suggestion is filled in. Select each one to pick the "
+                 "right printing.")
+    else:
+        text += " Every printing is accounted for."
+    if not_found:
+        text += f" {not_found:,} couldn't be found on Scryfall and will be skipped."
+    cards = sum(e.quantity for e in entries if e.include and e.card is not None)
+    return text, f"Import {cards:,} Card{'s' if cards != 1 else ''}"
+
+
+def choose_printing(entry, card, foil, price, auto_price):
+    """The reviewer picked a printing (card), finish and price for an entry. An exact match
+    stays "from file" unless they switch to another printing; a price matching Scryfall's
+    (auto_price) stays automatic."""
+    if entry.state != EXACT or card.id != entry.card.id:
+        entry.state = CHOSEN
+    entry.card, entry.foil = card, foil
+    entry.price = None if abs(price - auto_price) < 0.005 else price

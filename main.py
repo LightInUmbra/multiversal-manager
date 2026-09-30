@@ -964,7 +964,6 @@ def _install_crash_log():
 
     sys.excepthook = report
     qInstallMessageHandler(qt_message)
-    lists.DIAGNOSTICS_LOG = log  # the Deck Builder notes what hid it (lists.ListsWindow.hideEvent)
 
 
 def main():

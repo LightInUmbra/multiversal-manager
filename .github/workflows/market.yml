@@ -1,0 +1,46 @@
+# Builds the website's market data once a day (market.py): every paper printing's price today and
+# over the last 90 days, from Scryfall and MTGJSON, far too much for a browser to download itself.
+# Published as market.json.gz on the market-data branch, one commit replaced each day so the
+# repository doesn't grow; the website reads it from raw.githubusercontent.com.
+name: Market data
+
+on:
+  schedule:
+    - cron: "0 14 * * *"   # daily, after Scryfall's bulk data and MTGJSON's prices update
+  workflow_dispatch:       # or run it by hand from the Actions tab
+
+permissions:
+  contents: write          # to push the market-data branch
+
+concurrency: market-data
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          submodules: true   # Magic-Projects (external/), which scryfall.py uses
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.14"
+
+      - name: Install dependencies
+        run: pip install "requests>=2.31"   # all market.py needs (no Qt)
+
+      - name: Build the market data
+        run: python market.py market.json.gz
+
+      - name: Publish on the market-data branch
+        run: |
+          mkdir publish
+          mv market.json.gz publish/
+          cd publish
+          git init -q -b market-data
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add market.json.gz
+          git commit -q -m "Market data for $(date -u +%F)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" market-data

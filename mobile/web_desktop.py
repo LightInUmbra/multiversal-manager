@@ -12,7 +12,7 @@ import price_changes
 import scryfall
 import theme
 
-TABS = ["Cards", "Decks", "Rules"]
+TABS = ["Cards", "Decks", "Rules", "Finance"]
 DOUBLE_CLICK = 0.5  # seconds between two clicks on a row that open Edit
 DETAIL_WIDTH = 300  # the selected card's panel
 PAGE_PADDING = 28
@@ -90,9 +90,9 @@ def works_well_with(card):
 
 class CardsPage:
     """The collection: summary tiles, search and actions, the table and the selected card.
-    add(), edit(row) and refresh_prices(e) are main.py's; remove asks here first."""
+    add(), edit(row), refresh_prices(e) and import_cards() are main.py's; remove asks here first."""
 
-    def __init__(self, page, toast, add, edit, refresh_prices):
+    def __init__(self, page, toast, add, edit, refresh_prices, import_cards):
         self.page, self.toast, self.edit = page, toast, edit
         self.sort = {"column": 0, "ascending": True}
         self.selected = {"id": None, "clicked_at": 0}
@@ -106,7 +106,8 @@ class CardsPage:
         self.detail = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=8)
         self.view = ft.Container(ft.Column([
             self.tiles,
-            ft.Row([self.search, ft.Container(expand=True), theme.button("Refresh Prices", refresh_prices),
+            ft.Row([self.search, ft.Container(expand=True), theme.button("Import…", lambda e: import_cards()),
+                    theme.button("Refresh Prices", refresh_prices),
                     theme.button("+ Add Card", lambda e: add(), primary=True)]),
             ft.Row([theme.panel(self.table, expand=True),
                     theme.panel(self.detail, width=DETAIL_WIDTH, padding=16)],

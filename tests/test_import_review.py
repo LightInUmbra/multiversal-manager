@@ -46,3 +46,30 @@ def test_entry_record_keeps_foil_and_price_override():
     assert entry.record()["price"] == 2.0
     entry.price = 5.0
     assert (entry.record()["price"], entry.record()["quantity"], entry.record()["foil"]) == (5.0, 3, True)
+
+
+def test_the_website_parses_a_files_text():
+    # The browser gives the file's contents, not a path
+    rows, _ = importer.parse("Name,Quantity\nOpt,2\n", "cards.csv")
+    assert [(r.name, r.quantity) for r in rows] == [("Opt", 2)]
+    rows, _ = importer.parse("4 Lightning Bolt\n", "deck.txt")
+    assert [(r.name, r.quantity) for r in rows] == [("Lightning Bolt", 4)]
+
+
+def test_summary_counts_what_needs_review_and_what_imports():
+    result = _result("2 Opt (XLN) 65\n1 Sol Ring\n1 Fake Card",
+                     {"Opt": _card("o", "Opt"), "Sol Ring": _card("s", "Sol Ring")})
+    entries = importer.build_entries(result)
+    text, button = importer.review_summary(entries)
+    assert "1 need a printing chosen" in text and "1 couldn't be found" in text and button == "Import 3 Cards"
+    entries[0].include = False  # Sol Ring
+    assert importer.review_summary(entries)[1] == "Import 2 Cards"
+
+
+def test_choosing_a_printing():
+    exact = importer.ReviewEntry(importer.ImportRow(1, 1, "Opt"), _card("o", "Opt"), importer.EXACT)
+    importer.choose_printing(exact, exact.card, 0, 1.0, 1.0)
+    assert exact.state == importer.EXACT and exact.price is None  # same printing, Scryfall's price
+    other = _card("o2", "Opt", number="2")
+    importer.choose_printing(exact, other, 1, 3.5, 2.0)
+    assert (exact.state, exact.card, exact.foil, exact.price) == (importer.CHOSEN, other, 1, 3.5)

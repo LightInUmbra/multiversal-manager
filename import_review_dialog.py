@@ -1,6 +1,4 @@
 # Imports
-from dataclasses import dataclass
-
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QDialog, QHBoxLayout, QVBoxLayout, QTableWidget, QTableWidgetItem, QLabel,
@@ -11,13 +9,11 @@ from PySide6.QtWidgets import (
 import background
 import importer
 import scryfall
+from importer import (  # the review's Qt-free parts, shared with the website  # noqa: F401
+    CHOSEN, EXACT, FELL_BACK, NEEDS_REVIEW as _NEEDS_REVIEW, NOT_FOUND, STATUS_TEXT as _STATUS_TEXT, UNSPECIFIED,
+    ReviewEntry, build_entries, count,
+)
 from printing_picker import PrintingPicker
-
-
-def count(n, word):
-    # "1 entry", "3 entries", "1,204 cards"
-    plural = word[:-1] + "ies" if word.endswith("y") else word + "s"
-    return f"{n:,} {word if n == 1 else plural}"
 
 
 def start_import(parent, destination, on_done):
@@ -71,56 +67,6 @@ def start_import(parent, destination, on_done):
 
 COLUMNS = ["Import", "Qty", "Name", "Printing", "Finish", "Status"]
 INCLUDE_COL, QTY_COL, NAME_COL, PRINTING_COL, FINISH_COL, STATUS_COL = range(len(COLUMNS))
-
-# Entry states
-EXACT = "exact"           # the file named this exact printing
-UNSPECIFIED = "unspecified"  # the file only gave a name (or name + set)
-FELL_BACK = "fell_back"   # the file's printing wasn't found; matched by name instead
-CHOSEN = "chosen"         # the user picked the printing here
-NOT_FOUND = "not_found"
-
-_STATUS_TEXT = {
-    EXACT: "✓ Printing from file",
-    UNSPECIFIED: "⚠ Choose printing (file didn't say which)",
-    FELL_BACK: "⚠ Choose printing (file's printing not found)",
-    CHOSEN: "✓ Chosen",
-    NOT_FOUND: "✗ Not found on Scryfall",
-}
-_NEEDS_REVIEW = {UNSPECIFIED, FELL_BACK}
-
-
-@dataclass
-class ReviewEntry:
-    row: object
-    card: object = None
-    state: str = NOT_FOUND
-    foil: int = 0  # finish code: 0 non-foil, 1 foil, 2 etched
-    price: float = None  # None = Scryfall's price for the printing + finish
-    quantity: int = 1
-    include: bool = True
-
-    def record(self):
-        return {**scryfall.card_record(self.card, foil=self.foil, quantity=self.quantity, price=self.price),
-                **self.row.details()}
-
-
-def build_entries(result):
-    # One ReviewEntry per file row, entries that need a decision first
-    fell_back = {id(row) for row, _ in result.approximate}
-    entries = []
-    for row, card in result.matched:
-        if id(row) in fell_back:
-            state = FELL_BACK
-        elif row.scryfall_id or (row.set_code and row.collector_number):
-            state = EXACT
-        else:
-            state = UNSPECIFIED
-        entries.append(ReviewEntry(row, card, state, row.foil, None, row.quantity))
-    entries += [ReviewEntry(row, None, NOT_FOUND, row.foil, None, row.quantity, include=False)
-                for row in result.unmatched]
-    order = {FELL_BACK: 0, UNSPECIFIED: 1, NOT_FOUND: 2, EXACT: 3}
-    entries.sort(key=lambda e: (order[e.state], e.row.line))
-    return entries
 
 
 class ImportReviewDialog(QDialog):
@@ -307,12 +253,7 @@ class ImportReviewDialog(QDialog):
         if entry is None or card is None:
             return
         foil = self.picker.finish()
-        auto_price = scryfall.price_for(card, foil)
-        # An exact match stays "from file" unless the user switches to another printing
-        if entry.state != EXACT or card.id != entry.card.id:
-            entry.state = CHOSEN
-        entry.card, entry.foil = card, foil
-        entry.price = None if abs(self.picker.price() - auto_price) < 0.005 else self.picker.price()
+        importer.choose_printing(entry, card, foil, self.picker.price(), scryfall.price_for(card, foil))
         self._fill_row(self.entries.index(entry))
         self._update_summary()
 

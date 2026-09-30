@@ -20,6 +20,7 @@ import card_form  # noqa: E402
 import copy_details  # noqa: E402
 import database as db  # noqa: E402
 import decks  # noqa: E402
+import importer  # noqa: E402
 import rules_tab  # noqa: E402
 import scan  # noqa: E402
 import scryfall  # noqa: E402
@@ -27,6 +28,8 @@ import sync  # noqa: E402
 import theme  # noqa: E402
 import web_decks  # noqa: E402
 import web_desktop  # noqa: E402
+import web_finance  # noqa: E402
+import web_import  # noqa: E402
 import web_rules  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
@@ -113,8 +116,10 @@ def main(page: ft.Page):
 
     def resized(e):
         # The desktop layout's table widths follow the window
-        if desktop_layout() and page.navigation_bar.selected_index == 0:
+        if desktop_layout() and tab_index() == 0:
             cards_page.refresh()
+        elif desktop_layout() and tab_index() == 3:
+            finance_page.fill()
 
     page.on_resize = resized
 
@@ -410,15 +415,24 @@ def main(page: ft.Page):
     def open_url(url):
         page.run_task(ft.UrlLauncher().launch_url, url)
 
+    # The desktop layout's header has more tabs than the phone's bottom bar (Finance), so it
+    # keeps its own place; the two agree on the tabs they share
+    desktop_tab = {"index": 0}
+
+    def tab_index():
+        return desktop_tab["index"] if desktop_layout() else page.navigation_bar.selected_index
+
     def go_to(index):
-        page.navigation_bar.selected_index = index
+        desktop_tab["index"] = index
+        if index < len(page.navigation_bar.destinations):
+            page.navigation_bar.selected_index = index
         switch(None)
 
     desktop_top = ft.Column(spacing=0, visible=False)
 
     def show_header():
         desktop_top.controls = [web_desktop.header(
-            page.navigation_bar.selected_index, go_to, sync_now, setting("account_email"),
+            tab_index(), go_to, sync_now, setting("account_email"),
             [("Sync account…", account), ("Refresh prices", refresh_prices),
              ("Mobile layout", lambda e: set_layout(False)),
              ("Multiversal Manager on GitHub", lambda e: open_url(GITHUB_URL)),
@@ -489,11 +503,28 @@ def main(page: ft.Page):
         if row:
             card_form.open_card_form(page, saved, existing=row)
 
-    cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices)
+    file_picker = ft.FilePicker()
+
+    def desktop_import():
+        page.run_task(web_import.start_import, page, file_picker, "your collection", imported, busy)
+
+    def imported(records):
+        # The desktop's _on_import_reviewed: save, show the new cards, say how many
+        if records is None:
+            toast("Import cancelled, nothing was added.")
+            return
+        card_ids = db.add_cards(records)
+        cards_page.search.value = ""
+        cards_page.refresh(select_id=card_ids[0] if card_ids else None)
+        cards = sum(record["quantity"] for record in records)
+        toast(f"Imported {importer.count(cards, 'card')} ({importer.count(len(records), 'entry')}).")
+
+    cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices, desktop_import)
     decks_page = web_decks.DecksPage(page, toast, busy)
 
     rules_view = rules_tab.Rules(page, toast, busy)
     rules_page = web_rules.RulesPage(page, toast, busy)  # the desktop layout's
+    finance_page = web_finance.FinancePage(page, busy)  # the desktop layout's only (for now)
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
     tabs = [deck_builder, rules_view]
 
@@ -515,9 +546,12 @@ def main(page: ft.Page):
     def switch(e):
         if scanner.active:
             scanner.close()
-        index = page.navigation_bar.selected_index
+        if not desktop_layout():
+            desktop_tab["index"] = page.navigation_bar.selected_index
+        index = tab_index()
         # The desktop layout has its own pages where they're built (Cards, Decks), else the phone's
-        pages = [collection_view()] + ([decks_page, rules_page] if desktop_layout() else [deck_builder, rules_view])
+        pages = [collection_view()] + ([decks_page, rules_page, finance_page] if desktop_layout()
+                                       else [deck_builder, rules_view])
         current = pages[index]
         body.content = current if index == 0 else current.view
         # The phone's + button, on Collection and Decks; the desktop layout has buttons instead
