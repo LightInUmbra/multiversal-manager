@@ -141,7 +141,13 @@ Moving an existing collection over? Use *Back Up Now* in the old copy, then *Res
 
 Download `Multiversal-Manager-<version>.apk` from the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases) on your phone and open it. Android asks you to allow installs from your browser or file manager the first time, and may warn that the app isn't from the Play Store. Later versions install over it as updates. It runs on 64-bit phones (nearly every phone from the last several years). Sign in with your sync account and your collection comes across.
 
-### From source
+### About the website and the Android app
+
+I run the website ([multiversalmanager.app](https://multiversalmanager.app)) and publish the Android app myself, so everyone's on the same version with sync that just works. No need to build or host your own; just use those! (A copy built by someone else can't update the real app or connect to sync anyway.) Found a bug or have an idea? [Open an issue](https://github.com/LightInUmbra/multiversal-manager/issues).
+
+### Desktop from source
+
+Feel free to run it from source on your own computer and poke around. It's meant for your own personal use, so if you want to share it with a friend, just send them to the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases).
 
 Multiversal Manager uses [Magic-Projects](https://github.com/LightInUmbra/Magic-Projects), a Scryfall toolkit I also wrote, as a git submodule. So clone it with submodules:
 
@@ -182,15 +188,6 @@ python build.py
 
 This makes both versions in `dist/`: the portable zip and, if [Inno Setup 6](https://jrsoftware.org/isinfo.php) is installed (`winget install JRSoftware.InnoSetup`), the installer. The version number is `VERSION` in `build.py`.
 
-### Building the website
-
-```
-python mobile/build_web.py
-python -m http.server -d mobile/build/web
-```
-
-The first line builds a static site in `mobile/build/web` (the phone app built with `flet build web`, so its Python runs in the browser and needs no server); the second serves it at http://localhost:8000 to try. The website keeps no collection between visits: signing in brings yours over from sync. It does come with the rules: browsers can't download them from Wizards of the Coast, so the build copies in the ones the desktop app downloaded (open its Rules window once first), set notes and MTG Wiki pages included; card rulings and banned lists come live from Scryfall. Set `BASE_URL` to the folder it's served from (e.g. `multiversal-manager` for GitHub Pages) before building.
-
 ### Updating which cards work together
 
 ```
@@ -199,11 +196,11 @@ python interactions.py build
 
 Rebuilds `interactions.json.gz` from the card database and rulings on your computer (open the Deck Builder and the Rules window once so both are downloaded). It takes about half a minute. Every release does this for you: it downloads Scryfall's newest card data and rulings and rebuilds the file before building the apps (`python interactions.py build --download`, which uses a throwaway database and never touches your collection), so committing the file is only needed to try new data before a release. Cards newer than the file still pair up by their rules text.
 
-### The website's market data
+### How the official releases are made
 
-The website and the phone can't download the whole card market like the desktop does, so `.github/workflows/market.yml` builds a small summary of it once a day on GitHub (`python market.py market.json.gz`) and publishes it on the `market-data` branch, where Finance and Trends read it. It runs on its own; to start it by hand, use *Run workflow* on the Actions tab.
+Mostly notes for myself on how new versions go out.
 
-### Releasing a new version
+The website and the phone can't download the whole card market like the desktop does, so `.github/workflows/market.yml` builds a small summary of it once a day on GitHub and publishes it on the `market-data` branch, where Finance and Trends read it.
 
 Tests run on GitHub for every push (the badge at the top). To publish a version, tag it and push the tag:
 
@@ -213,8 +210,6 @@ git push origin v1.0.0
 ```
 
 GitHub then runs the tests, builds the installer and the portable zip on Windows, and publishes both on the [Releases page](https://github.com/LightInUmbra/multiversal-manager/releases), with notes listing what changed since the last release. Then it builds the Android app and adds its APK to the same release, and builds the website (downloading the newest rules for it first) and publishes it on GitHub Pages at [multiversalmanager.app](https://multiversalmanager.app). The tag sets the version number, so `v1.2.0` makes `Multiversal-Manager-1.2.0-setup.exe` and `Multiversal-Manager-1.2.0.apk`.
-
-The Android app is signed with a release key that isn't in the repository. To build it yourself, run `python mobile/build_apk.py` (see the top of that file); without the key your APK gets your computer's own debug key, which can't update a copy installed from the Releases page.
 
 ---
 
@@ -283,8 +278,8 @@ multiversal-manager/
         sort_controls.py     # Sort / Group controls for the website and the phone
         card_form.py         # The website's Add / Edit Card window
         theme.py             # Colors, fonts and shared controls for the phone and website
-        build_apk.py         # Builds the APK
-        build_web.py         # Builds the website
+        build_apk.py         # Builds the official APK (release pipeline only)
+        build_web.py         # Builds the official website (release pipeline only)
     external/
         Magic-Projects/      # Submodule: the ScryFunctions toolkit and Card class
     tests/
@@ -294,8 +289,16 @@ multiversal-manager/
 
 ---
 
+## Using it for something more?
+
+Multiversal Manager is free to use for fun: tracking your collection, building decks, checking prices. If you'd like to use it for a business (say, for a card shop), want a private or custom version, or have any other special request, just [get in touch](https://github.com/LightInUmbra/multiversal-manager/issues) and we can work something out.
+
+---
+
 ## Credits and legal
 
 Card data, images and daily prices come from [Scryfall](https://scryfall.com), and historical prices come from [MTGJSON](https://mtgjson.com). Two-card combos for the Commander Brackets check come from [Commander Spellbook](https://commanderspellbook.com). A huge thank you to both for making this data freely available; this app wouldn't exist without them. Card images are always shown in full so the artist credit and copyright line stay visible. Prices are market estimates, so please don't treat them as gospel.
+
+Multiversal Manager is © Umbra Ortiz under the [PolyForm Strict License 1.0.0](LICENSE). In plain terms: use it and read the code as much as you like for personal, noncommercial use. For anything beyond that, like sharing your own copy, hosting your own version, or using it commercially, [just ask](#using-it-for-something-more). The Magic-Projects submodule and the Python packages this app depends on keep their own licenses.
 
 Multiversal Manager is unofficial Fan Content permitted under the [Fan Content Policy](https://company.wizards.com/en/legal/fancontentpolicy). Not approved/endorsed by Wizards. Portions of the materials used are property of Wizards of the Coast. ©Wizards of the Coast LLC.
