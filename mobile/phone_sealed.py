@@ -8,6 +8,7 @@ import flet as ft
 import database as db
 import mtgjson
 import price_changes
+import sort_controls
 import theme
 from web_finance import _money
 
@@ -43,12 +44,15 @@ class PhoneSealed:
         self.page, self.toast, self.busy, self.host = page, toast, busy, host
         self.total = ft.Column(spacing=1)
         self.search = ft.TextField(hint_text="Filter by product, set, type or notes", prefix_icon=ft.Icons.SEARCH,
-                                   dense=True, on_change=lambda e: self.refresh())
+                                   dense=True, expand=True, on_change=lambda e: self.refresh())
+        # Sort and group (card_sorting.py): a chip beside the filter opens every choice
+        self.sorting = sort_controls.SortState("sealed", "sealed", lambda: self.refresh())
+        self.search_row = ft.Row([self.search], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
         self.list = ft.ListView(expand=True, spacing=0)
         self.view = ft.Column([
             ft.Container(self.total, border=ft.Border.all(1, theme.LINE), border_radius=10,
                          bgcolor=theme.COLORS["surface"], padding=ft.Padding.symmetric(horizontal=12, vertical=8)),
-            self.search, self.list], expand=True, spacing=8)
+            self.search_row, self.list], expand=True, spacing=8)
 
     def refresh(self):
         count, value, paid, value_of_paid = db.sealed_summary()
@@ -61,7 +65,15 @@ class PhoneSealed:
         needle = (self.search.value or "").strip().lower()
         rows = [r for r in db.get_sealed() if not needle or needle in " ".join(
             str(r[k] or "") for k in ("name", "set_name", "set_code", "product_type", "notes")).lower()]
-        self.list.controls = [self.row(r) for r in rows] or [ft.Container(ft.Text(
+        self.search_row.controls = [self.search, sort_controls.chip(self.page, self.sorting)]
+        lines = []
+        for title, members in self.sorting.arrange(rows):
+            if title is not None:
+                lines.append(sort_controls.heading(self.sorting, title, members, noun="item"))
+                if title in self.sorting.folded:
+                    continue
+            lines += [self.row(r) for r in members]
+        self.list.controls = lines or [ft.Container(ft.Text(
             "No sealed product yet. Tap + to add a booster box, bundle, precon…" if not needle else "Nothing matches.",
             italic=True, color=theme.MUTED), padding=ft.Padding.only(top=20))]
         self.page.update()

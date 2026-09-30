@@ -2,7 +2,8 @@ import card_scan
 
 NAMES = card_scan.Names(["Sol Ring", "Solemn Simulacrum", "Llanowar Elves", "Lightning Bolt", "Kaya, Geist Hunter",
                          "Delver of Secrets // Insectile Aberration", "Thassa's Oracle", "Arcane Signet",
-                         "Emeritus of Truce // Swords to Plowshares", "Swords to Plowshares"])
+                         "Emeritus of Truce // Swords to Plowshares", "Swords to Plowshares", "Pip-Boy 3000",
+                         "Dead // Gone"])
 
 
 def _lines(*texts):
@@ -41,3 +42,10 @@ def test_old_cards_and_unreadable_photos():
 def test_the_title_wins_over_names_in_the_rules_text():
     lines = _lines("Arcane Signet", "Artifact", "Search for a Sol Ring", "0092 C", "M3C • EN")
     assert card_scan.identify(lines, NAMES) == ("Arcane Signet", "M3C", "92")
+
+
+def test_a_name_ending_in_a_number_isnt_taken_for_a_mana_cost():
+    # "3000" looks like a mana cost read as digits; stripping it left "Pip-Boy", and a lower line won
+    lines = _lines("Pip-Boy 3000 1", "Artifact — Equipment", "Whenever equipped creature attacks, choose one", "Dead")
+    assert card_scan.identify(lines, NAMES)[0] == "Pip-Boy 3000"
+    assert NAMES.match("Pip-Boy 3000") == "Pip-Boy 3000"

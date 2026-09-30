@@ -6,23 +6,21 @@ from urllib.parse import quote_plus
 
 import flet as ft
 
+import card_sorting
 import database as db
 import mtgjson
 import price_changes
+import sort_controls
 import theme
 from phone_sealed import _price, gain_color, gain_text
 from web_desktop import DOUBLE_CLICK, _money
 
 COLUMNS = ["Product", "Set", "Type", "Qty", "Paid (each)", "Value (each)", "Total Value", "Gain / Loss", "Notes"]
 NUMERIC = {3, 4, 5, 6, 7}
+# The sort each column's heading picks
+COLUMN_SORTS = ["Name", "Set", "Product type", "Quantity", "Paid", "Price", "Total", "Gain / Loss", "Notes"]
+QTY_COL, TOTAL_COL = 3, 6
 RESULTS_SHOWN = 500  # the catalog's matches listed at once, like the desktop
-
-
-def _sort_key(row, column):
-    change = price_changes.sealed_gain(row)
-    return [(row["name"] or "").casefold(), (row["set_name"] or "").casefold(), (row["product_type"] or "").casefold(),
-            row["quantity"], row["paid"] or 0, row["value"] or 0, (row["value"] or 0) * row["quantity"],
-            change or 0, (row["notes"] or "").casefold()][column]
 
 
 class SealedPanel:
@@ -32,7 +30,10 @@ class SealedPanel:
     def __init__(self, page, toast, busy, on_change=None):
         self.page, self.toast, self.busy, self.on_change = page, toast, busy, on_change or (lambda: None)
         self.selected = {"id": None, "clicked_at": 0}
-        self.sort = {"column": 0, "ascending": True}
+        # Sort and group (card_sorting.py); a column's heading sorts by it too
+        self.sorting = sort_controls.SortState("sealed", "sealed", lambda: self.refresh(),
+                                               extra_sorts=list(card_sorting.SEALED_COLUMN_KEYS))
+        self.sort_row = ft.Row(spacing=8)
         self.rows = {}
         self.search = ft.TextField(hint_text="Filter by product, set, type or notes…", prefix_icon=ft.Icons.SEARCH,
                                    dense=True, width=340, filled=True, bgcolor=theme.COLORS["surface_container_low"],
@@ -45,7 +46,7 @@ class SealedPanel:
         self.remove_button = theme.button("Remove", lambda e: self.remove(self.rows[self.selected["id"]]), disabled=True)
         self.look_up_button = theme.button("Look Up on TCGplayer ↗", disabled=True)
         self.view = ft.Column([
-            ft.Row([self.search]),
+            ft.Row([self.search, self.sort_row]),
             theme.panel(self.table, expand=True),
             ft.Row([self.summary, self.gain, ft.Container(expand=True), self.look_up_button, self.edit_button,
                     self.remove_button, theme.button("Add Sealed Product…", lambda e: self.add(), primary=True)],
@@ -57,7 +58,7 @@ class SealedPanel:
         needle = (self.search.value or "").strip().lower()
         rows = [r for r in everything if not needle or needle in " ".join(
             str(r[k] or "") for k in ("name", "set_name", "set_code", "product_type", "notes")).lower()]
-        rows.sort(key=lambda r: _sort_key(r, self.sort["column"]), reverse=not self.sort["ascending"])
+        self.sort_row.controls = sort_controls.toolbar(self.sorting)
         self.rows = {r["id"]: r for r in everything}
         if self.selected["id"] not in self.rows:
             self.selected["id"] = None
@@ -85,25 +86,42 @@ class SealedPanel:
                     text(gain_text(change), color=gain_color(change)),
                     text((r["notes"] or "").replace("\n", " "), color=theme.MUTED)]
 
+        def heading(title, members):
+            # A group's heading row, lined up with the columns: its name, items and value
+            copies, value = card_sorting.totals(members)
+            arrow = "▸" if title in self.sorting.folded else "▾"
+            bold = dict(weight=ft.FontWeight.W_600, color=theme.GOLD)
+            values = {0: text(f"{arrow} {title}", **bold), QTY_COL: text(str(copies), **bold),
+                      TOTAL_COL: text(_money(value), **bold)}
+            return ft.DataRow(cells=[ft.DataCell(values.get(i, text("")), on_tap=lambda e: self.sorting.toggle(title))
+                                     for i in range(len(COLUMNS))])
+
+        lines = []
+        for title, members in self.sorting.arrange(rows, extra_keys=card_sorting.SEALED_COLUMN_KEYS):
+            if title is not None:
+                lines.append(heading(title, members))
+                if title in self.sorting.folded:
+                    continue
+            lines += [ft.DataRow(selected=r["id"] == self.selected["id"],
+                                 cells=[ft.DataCell(c, on_tap=lambda e, r=r: self.clicked(r)) for c in cells(r)])
+                      for r in members]
         if not rows:
             return ft.Container(ft.Text("No sealed product yet. Add a booster box, bundle, precon… with Add Sealed "
                                         "Product." if not self.search.value else "Nothing matches the filter.",
                                         italic=True, color=theme.MUTED), padding=20)
         return ft.DataTable(
-            sort_column_index=self.sort["column"], sort_ascending=self.sort["ascending"],
+            sort_column_index=COLUMN_SORTS.index(self.sorting.view["sort"]),
+            sort_ascending=not self.sorting.view["descending"],
             heading_row_height=40, data_row_min_height=36, data_row_max_height=36, column_spacing=22,
             horizontal_margin=14, divider_thickness=1, horizontal_lines=ft.BorderSide(1, theme.LINE),
             heading_text_style=ft.TextStyle(size=12, weight=ft.FontWeight.W_600, color=theme.GOLD, letter_spacing=1),
             data_row_color={ft.ControlState.SELECTED: theme.COLORS["primary_container"]},
             columns=[ft.DataColumn(ft.Text(label.upper()), numeric=i in NUMERIC, on_sort=self.sorted_by)
                      for i, label in enumerate(COLUMNS)],
-            rows=[ft.DataRow(selected=r["id"] == self.selected["id"],
-                             cells=[ft.DataCell(c, on_tap=lambda e, r=r: self.clicked(r)) for c in cells(r)])
-                  for r in rows])
+            rows=lines)
 
     def sorted_by(self, e):
-        self.sort.update(column=e.column_index, ascending=e.ascending)
-        self.refresh()
+        self.sorting.pick(COLUMN_SORTS[e.column_index])
 
     def clicked(self, row):
         # Select, or a double click (a second click soon after) to edit, like the desktop

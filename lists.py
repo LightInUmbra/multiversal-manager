@@ -28,6 +28,7 @@ from PySide6.QtWidgets import (
 
 import background
 import brackets
+import card_sorting
 import database as db
 import deck_stats
 import finance
@@ -40,6 +41,7 @@ from import_review_dialog import count, start_import
 from deck_stats import completion, deck_text, summary  # noqa: F401
 from importer import SECTIONS
 from recommendations import RecommendationsPanel
+from sort_bar import SortBar
 
 KINDS = {"deck": "Deck", "binder": "Binder", "wishlist": "Wishlist"}
 SECTION_TITLES = {"Commander": "Commander", "Companion": "Companion", "Main": "Main Deck",
@@ -321,6 +323,10 @@ class ListsWindow(QWidget):
         self.bracket_label.setWordWrap(True)
         self.bracket_label.setStyleSheet("color: gray;")
 
+        # Sort and group the list (card_sorting.py); each list remembers its own
+        self.sort_bar = SortBar("deck", "list:none")
+        self.sort_bar.changed.connect(self.load_entries)
+
         self.deck_tree = QTreeWidget()
         self.deck_tree.setColumnCount(len(DECK_COLUMNS))
         self.deck_tree.setHeaderLabels(DECK_COLUMNS)
@@ -348,6 +354,7 @@ class ListsWindow(QWidget):
         layout.addWidget(self.types_label)
         layout.addWidget(self.problems_label)
         layout.addWidget(self.bracket_label)
+        layout.addWidget(self.sort_bar)
         layout.addWidget(self.deck_tree, stretch=1)
         return panel
 
@@ -629,15 +636,19 @@ class ListsWindow(QWidget):
                                         f"{formats.label(self.deck_format())}"
                                         f"{' and fits ' + brackets.label(target) if target else ''}</span>")
 
-        sections = SECTIONS if deck else [""]
-        for section in sections:
-            entries = [e for e in self._entries if (e["section"] if deck else "") == section
-                       or (deck and section == "Main" and e["section"] not in SECTIONS)]
-            shown = entries or section in ("Main", "Sideboard", "") or (
-                section == "Commander" and formats.FORMATS.get(self.deck_format(), formats.FORMATS["casual"]).commander)
-            if not shown:
-                continue
-            header = QTreeWidgetItem([f"{SECTION_TITLES[section]} — {sum(e['quantity'] for e in entries)}"])
+        self.sort_bar.set_key(f"list:{self._list['id']}", "deck" if deck else "list")
+        groups = [(title or SECTION_TITLES[""], entries) for title, entries in self.sort_bar.arrange(self._entries)]
+        if deck and self.sort_bar.view["group"] == "Section":
+            # The sections cards are added to show even while empty
+            present = dict(groups)
+            sections = [SECTION_TITLES[s] for s in SECTIONS if SECTION_TITLES[s] in present or s == "Sideboard" or (
+                s == "Commander" and formats.FORMATS.get(self.deck_format(), formats.FORMATS["casual"]).commander)]
+            groups = [(title, present.get(title, [])) for title in sections] + [
+                (title, entries) for title, entries in groups if title not in sections]
+        elif not groups:
+            groups = [(SECTION_TITLES["Main"] if deck else SECTION_TITLES[""], [])]
+        for title, entries in groups:
+            header = QTreeWidgetItem([card_sorting.heading(title, entries)])
             font = header.font(0)
             font.setBold(True)
             header.setFont(0, font)

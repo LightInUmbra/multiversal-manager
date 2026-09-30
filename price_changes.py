@@ -5,6 +5,8 @@ phone app and the website use it too; trends.py builds the desktop's windows on 
 # Imports
 from dataclasses import dataclass
 
+import scryfall
+
 
 @dataclass
 class Change:
@@ -43,6 +45,24 @@ def collection_change(changes):
     past_value = sum(c.past * c.quantity for c in changes.values())
     total = sum(c.total for c in changes.values())
     return total, (total / past_value * 100 if past_value else None)
+
+
+def movers(changes, shown):
+    # (gainers, losers): up to shown (card_id, Change) pairs each way, the biggest first
+    ranked = sorted(changes.items(), key=lambda item: item[1].total)
+    losers = [item for item in ranked if item[1].total < -0.004][:shown]
+    gainers = [item for item in reversed(ranked) if item[1].total > 0.004][:shown]
+    return gainers, losers
+
+
+def mover_name(row, change):
+    # A gainer's or loser's line: the card, its finish and set, and how many copies
+    name = row["name"] + (f" ({scryfall.finish_label(row['foil']).lower()})" if row["foil"] else "")
+    if row["set_code"]:
+        name += f"  ·  {row['set_code']}"
+    if change.quantity > 1:
+        name += f"  ×{change.quantity}"
+    return name
 
 
 def sealed_gain(row):

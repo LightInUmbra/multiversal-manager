@@ -157,9 +157,21 @@ RARITIES = {"c": "Common", "u": "Uncommon", "r": "Rare", "m": "Mythic", "s": "Sp
 KEEP_FOR = timedelta(hours=20)  # the phone app's copy; the workflow builds a new one daily
 
 
+_held = {}  # url: (when, summary), so Finance and Trends share one download per visit
+
+
 def download(url=URL, cache=None):
     """The summary. cache: a file to keep it in (the phone app's, a Path), used again while
     it's younger than KEEP_FOR; the website has nowhere to keep it, so it downloads per visit."""
+    held = _held.get(url)
+    if held and datetime.now() - held[0] < KEEP_FOR:
+        return held[1]
+    summary = _fetch(url, cache)
+    _held[url] = (datetime.now(), summary)
+    return summary
+
+
+def _fetch(url, cache):
     if cache is not None and cache.exists():
         age = datetime.now() - datetime.fromtimestamp(cache.stat().st_mtime)
         if age < KEEP_FOR:
@@ -175,11 +187,15 @@ def rows(summary, days):
     """The Finance window's rows (as db.get_watchlist gives them) for a period of days: each
     printing's price today and its price that many days ago as "past". "index" is for history()."""
     column = summary["offsets"].index(days)
-    names, sets = summary["names"], summary["sets"]
-    return [{"index": index, "scryfall_id": card_id, "name": names[name], "set_code": set_code,
-             "set_name": sets.get(set_code, ""), "collector_number": number, "rarity": RARITIES.get(rarity, ""),
-             "foil": foil, "price": price / 100, "past": past[column] / 100 or None}
-            for index, (card_id, name, set_code, number, rarity, foil, price, past) in enumerate(summary["cards"])]
+    return [row(summary, index, column) for index in range(len(summary["cards"]))]
+
+
+def row(summary, index, column):
+    # One printing's row for rows(); column: the index of the period's days in summary["offsets"]
+    card_id, name, set_code, number, rarity, foil, price, past = summary["cards"][index]
+    return {"index": index, "scryfall_id": card_id, "name": summary["names"][name], "set_code": set_code,
+            "set_name": summary["sets"].get(set_code, ""), "collector_number": number,
+            "rarity": RARITIES.get(rarity, ""), "foil": foil, "price": price / 100, "past": past[column] / 100 or None}
 
 
 def history(summary, index):
@@ -198,6 +214,43 @@ def period_changes(summary, index):
         then = past[summary["offsets"].index(days)] / 100 or None
         changes.append((label, then, change_for({"price": price / 100, "past": then})))
     return changes
+
+
+# The user's own collection (Trends on the website and phone, which keep no price history)
+
+def index_of(summary, card):
+    # A collection row's printing in the summary (for history() and row()), or None
+    if "_by_printing" not in summary:  # built once per summary
+        summary["_by_printing"] = {(c[0], c[5]): i for i, c in enumerate(summary["cards"])}
+    return summary["_by_printing"].get((card["scryfall_id"], card["foil"]))
+
+
+def past_prices(summary, cards, days):
+    """{card id: price that many days ago} for collection rows (db.get_all_cards), like
+    db.get_past_prices; rows with no price then, or none now, are left out"""
+    column = summary["offsets"].index(days)
+    prices = {}
+    for card in cards:
+        index = index_of(summary, card)
+        if index is not None and card["price"] and summary["cards"][index][7][column]:
+            prices[card["id"]] = summary["cards"][index][7][column] / 100
+    return prices
+
+
+def value_history(summary, cards):
+    """[(day, value)] of the collection as owned today, priced on each kept day, then today.
+    A card with no price back then counts at today's, so only price movement shows."""
+    built = date.fromisoformat(summary["built"])
+    totals, today = [0.0] * len(summary["offsets"]), 0.0
+    for card in cards:
+        now = card["price"] or 0
+        today += now * card["quantity"]
+        index = index_of(summary, card)
+        past = summary["cards"][index][7] if index is not None else [0] * len(totals)
+        for i, price in enumerate(past):
+            totals[i] += (price / 100 if price else now) * card["quantity"]
+    return ([((built - timedelta(days=n)).isoformat(), total) for n, total in zip(summary["offsets"], totals)]
+            + [(summary["built"], today)])
 
 
 def image_url(scryfall_id):

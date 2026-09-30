@@ -18,12 +18,14 @@ _SET_LINE = re.compile(rf"\b([A-Z0-9]{{3,5}})\s*[•·*.\-]?\s*(?:{LANGUAGES})\b
 _NUMBER = re.compile(r"^\s*0*(\d{1,4})(?:\s*/\s*\d{1,4})?(?:\s+[CURMSLTP])?\s*$")
 
 
-def _clean(text):
+def _clean(text, strip_cost=True):
     # A title as read: curly apostrophes straightened, stray symbols and a trailing mana
-    # cost read as digits ("Sol Ring 1") dropped
+    # cost read as digits ("Sol Ring 1") dropped; strip_cost=False keeps the numbers, for
+    # names that end in one ("Pip-Boy 3000")
     text = text.replace("’", "'").replace("`", "'")
     text = re.sub(r"[^A-Za-z0-9',\- ]", " ", text)
-    text = re.sub(r"(\s+[0-9XWUBRGC]{1,6})+\s*$", "", text)  # mana symbols are capitals; names' words aren't
+    if strip_cost:
+        text = re.sub(r"(\s+[0-9XWUBRGC]{1,6})+\s*$", "", text)  # mana symbols are capitals; names' words aren't
     return re.sub(r"\s+", " ", text).strip()
 
 
@@ -44,15 +46,19 @@ class Names:
 
     def match(self, title):
         """The card name a title read off a photo stands for, or None"""
-        key = _clean(title).lower()
-        if len(key) < 3:
-            return None
-        if key in self.full:
-            return self.full[key]
-        # Only names of about the same length can be close, which keeps this quick
-        nearby = [k for n in range(len(key) - 3, len(key) + 4) for k in self.by_length.get(n, ())]
-        close = difflib.get_close_matches(key, nearby, n=1, cutoff=NAME_CUTOFF)
-        return self.full[close[0]] if close else None
+        # Without the mana cost first, then as read, in case the name itself ends in a number
+        keys = [k for k in dict.fromkeys([_clean(title).lower(), _clean(title, strip_cost=False).lower()])
+                if len(k) >= 3]
+        exact = next((self.full[k] for k in keys if k in self.full), None)
+        if exact:
+            return exact
+        for key in keys:
+            # Only names of about the same length can be close, which keeps this quick
+            nearby = [k for n in range(len(key) - 3, len(key) + 4) for k in self.by_length.get(n, ())]
+            close = difflib.get_close_matches(key, nearby, n=1, cutoff=NAME_CUTOFF)
+            if close:
+                return self.full[close[0]]
+        return None
 
 
 def identify(lines, names):

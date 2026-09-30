@@ -824,7 +824,7 @@ def get_list_entries(list_id):
     with _connect() as conn:
         return conn.execute("""
             SELECT e.*, o.type_line, o.mana_cost, o.cmc, o.colors, o.color_identity, o.oracle_text,
-                   o.legalities, o.game_changer
+                   o.legalities, o.game_changer, o.rarity
             FROM list_entries e LEFT JOIN oracle_cards o ON o.name = e.name
             WHERE e.list_id = ? ORDER BY e.name COLLATE NOCASE
         """, (list_id,)).fetchall()
@@ -870,6 +870,18 @@ def replace_oracle_cards(records):
     with _connect() as conn:
         conn.execute("DELETE FROM oracle_cards")
         _add_oracle_cards(conn, records)
+
+
+def card_rules(names):
+    # {name: {"type_line", "cmc", "colors"}} for the named cards the card database has (for sorting)
+    names, found = list(names), {}
+    with _connect() as conn:
+        for start in range(0, len(names), 500):
+            chunk = names[start:start + 500]
+            for row in conn.execute(f"SELECT name, type_line, cmc, colors FROM oracle_cards WHERE name IN "
+                                    f"({','.join('?' * len(chunk))})", chunk):
+                found[row["name"]] = {"type_line": row["type_line"], "cmc": row["cmc"], "colors": row["colors"]}
+    return found
 
 
 def add_oracle_cards(records):

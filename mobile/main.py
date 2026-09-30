@@ -23,6 +23,7 @@ import decks  # noqa: E402
 import importer  # noqa: E402
 import rules_tab  # noqa: E402
 import scan  # noqa: E402
+import sort_controls  # noqa: E402
 import scryfall  # noqa: E402
 import sync  # noqa: E402
 import theme  # noqa: E402
@@ -35,6 +36,7 @@ import web_finance  # noqa: E402
 import web_import  # noqa: E402
 import web_rules  # noqa: E402
 import web_sealed  # noqa: E402
+import web_trends  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
 BACK_TO_EXIT = 2  # seconds to press back again to leave the app
@@ -100,8 +102,16 @@ def main(page: ft.Page):
     # Collection
 
     search = ft.TextField(hint_text="Filter by name, set or artist", prefix_icon=ft.Icons.SEARCH,
-                          dense=True, on_change=lambda e: show_cards())
+                          dense=True, expand=True, on_change=lambda e: show_cards())
+    # Sort and group (card_sorting.py): a chip beside the filter opens every choice
+    phone_sort = sort_controls.SortState("collection", "collection", lambda: show_cards())
+    search_row = ft.Row([search], spacing=8, vertical_alignment=ft.CrossAxisAlignment.CENTER)
     summary = ft.Text(weight=ft.FontWeight.BOLD)
+    # Tapping the summary opens Collection Trends
+    summary_line = ft.Container(ft.Row([summary, ft.Icon(ft.Icons.TRENDING_UP, size=18, color=theme.GOLD),
+                                        ft.Container(expand=True), ft.Text("Trends ›", size=12.5, color=theme.GOLD)],
+                                       spacing=6), padding=ft.Padding.symmetric(vertical=4),
+                                on_click=lambda e: trends_view.open(), tooltip="Collection Trends")
     card_list = ft.ListView(expand=True)
 
     def details(row):
@@ -137,10 +147,17 @@ def main(page: ft.Page):
         text = (search.value or "").lower()
         rows = [r for r in db.get_all_cards()
                 if text in f"{r['name']} {r['set_name']} {r['artist'] or ''}".lower()]
-        card_list.controls = [
-            ft.ListTile(title=ft.Text(f"{r['quantity']}× {r['name']}"), subtitle=ft.Text(details(r)),
-                        trailing=ft.Text(_money(r["price"])), on_click=lambda e, r=r: edit_card(r))
-            for r in rows]
+        search_row.controls = [search, sort_controls.chip(page, phone_sort)]
+        card_list.controls = []
+        for title, members in phone_sort.arrange(rows, busy):
+            if title is not None:
+                card_list.controls.append(sort_controls.heading(phone_sort, title, members))
+                if title in phone_sort.folded:
+                    continue
+            card_list.controls += [
+                ft.ListTile(title=ft.Text(f"{r['quantity']}× {r['name']}"), subtitle=ft.Text(details(r)),
+                            trailing=ft.Text(_money(r["price"])), on_click=lambda e, r=r: edit_card(r))
+                for r in members]
         _, cards, value = db.get_summary()
         summary.value = f"{cards} cards · ${value:,.2f}"
         page.update()
@@ -415,7 +432,8 @@ def main(page: ft.Page):
             *([ft.PopupMenuItem(content="Desktop layout", on_click=lambda e: set_layout(True))] if page.web else []),
         ]),
     ])
-    deck_builder = decks.Decks(page, toast, busy, card_dialog)
+    deck_builder = decks.Decks(page, toast, busy, card_dialog,
+                               scan=None if WEB else lambda list_id: page.run_task(open_scanner, list_id))
     body = ft.Container(expand=True)
 
     # The phone's Collection switches between cards and sealed product, like the desktop's two tabs
@@ -438,7 +456,7 @@ def main(page: ft.Page):
     def collection_view():
         if desktop_layout():
             return cards_page.view
-        shown = phone_sealed_view.view if collection_mode["sealed"] else ft.Column([search, summary, card_list],
+        shown = phone_sealed_view.view if collection_mode["sealed"] else ft.Column([search_row, summary_line, card_list],
                                                                                     expand=True)
         return ft.Column([collection_switch(), shown], expand=True, spacing=8)
 
@@ -467,7 +485,12 @@ def main(page: ft.Page):
             [("Sync account…", account), ("Refresh prices", refresh_prices),
              ("Mobile layout", lambda e: set_layout(False)),
              ("Multiversal Manager on GitHub", lambda e: open_url(GITHUB_URL)),
-             ("Scryfall", lambda e: open_url("https://scryfall.com"))])]
+             ("Scryfall", lambda e: open_url("https://scryfall.com"))], go_home)]
+
+    def go_home(e):
+        # The logo: the collection's Cards tab, from anywhere
+        cards_page.home()
+        go_to(0)
 
     def relayout():
         # Swaps between the phone's layout and the desktop's
@@ -554,8 +577,10 @@ def main(page: ft.Page):
         cards = sum(record["quantity"] for record in records)
         toast(f"Imported {importer.count(cards, 'card')} ({importer.count(len(records), 'entry')}).")
 
-    cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices, desktop_import)
+    cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices, desktop_import,
+                                     busy)
     cards_page.sealed = web_sealed.SealedPanel(page, toast, busy, on_change=cards_page.update_total)
+    cards_page.trends = web_trends.TrendsPanel(page, busy)
     decks_page = web_decks.DecksPage(page, toast, busy)
 
     rules_view = rules_tab.Rules(page, toast, busy)
@@ -585,6 +610,8 @@ def main(page: ft.Page):
 
     # The Sealed side of the phone's Collection; its Add Sealed Product screen opens like the review
     phone_sealed_view = phone_sealed.PhoneSealed(page, toast, busy, (open_review, close_review))
+    # Collection Trends, opened from the summary line above the cards; it opens like the review too
+    trends_view = web_trends.PhoneTrends(page, toast, busy, (open_review, close_review), cache=finance_view.cache)
 
     def phone_import():
         page.run_task(web_import.start_import, page, file_picker, "your collection", imported, busy,
@@ -593,17 +620,26 @@ def main(page: ft.Page):
 
     scanner = scan.Scanner(page, toast, on_added=show_cards)
 
-    async def open_scanner():
-        # The scanner takes the Collection tab's place until back (or another tab) closes it
-        page.navigation_bar.selected_index = 0
+    async def open_scanner(list_id=None):
+        # The scanner takes the Collection tab's place until back (or another tab) closes it;
+        # from inside a deck or list, it takes the deck's place and adds to it
+        if list_id is None:
+            page.navigation_bar.selected_index = 0
+        elif scanner.destination["target"] != str(list_id):
+            kind = next((l["kind"] for l in db.get_lists() if l["id"] == list_id), "deck")
+            scanner.destination = {"target": str(list_id), "section": "Main", "also": kind != "wishlist"}
         body.content = scanner.view
         page.floating_action_button.visible = False
         await scanner.open()
 
     def close_scanner():
         scanner.close()
-        body.content = collection_view()
         page.floating_action_button.visible = True
+        if page.navigation_bar.selected_index == 1:  # opened from a deck: back to it
+            body.content = deck_builder.view
+            deck_builder.refresh()
+            return
+        body.content = collection_view()
         show_cards()
 
     def switch(e):

@@ -14,12 +14,14 @@ import time
 import flet as ft
 
 import brackets
+import card_sorting
 import card_form
 import database as db
 import deck_stats
 import formats
 import importer
 import scryfall
+import sort_controls
 import synergy
 import theme
 from importer import SECTIONS
@@ -202,7 +204,9 @@ class DecksPage:
         self.list_id = None
         self.home = {"kind": "all", "search": "", "sort": "Name"}
         self.tab = MY_CARDS  # instant; Recommended loads from Scryfall only when opened
-        self.group = "Section"
+        # Sort and group the open list (card_sorting.py); each list remembers its own
+        self.sorting = sort_controls.SortState("deck", "list:none", self._sorted)
+        self.sort_tools = ft.Row(spacing=8)
         self.add_to = "Main"
         self.selected = None          # ("entry", id) or ("card", Scryfall/collection row)
         self.spellbook = {}           # list id -> Commander Spellbook's reading, until the list changes
@@ -402,6 +406,7 @@ class DecksPage:
             self.add_to = "Main"
         if self.tab == RECOMMENDED and not is_deck:
             self.tab = MY_CARDS
+        self.sorting.set_key(f"list:{self.list_id}", "deck" if is_deck else "list")
         self.s = dict(info=info, entries=entries, owned=owned, have=deck_stats.completion(entries, owned),
                       is_deck=is_deck, fmt=fmt, problems=problems, statuses=statuses, report=report)
         return self.s
@@ -579,9 +584,8 @@ class DecksPage:
         tools = [quick]
         if s["is_deck"]:
             tools += [_dropdown(self.add_to, [(sec, f"Add to: {SECTION_TITLES[sec]}") for sec in SECTIONS],
-                                lambda e: self.set_add_to(e.control.value), 190),
-                      _dropdown(self.group, [("Section", "Group: Section"), ("Type", "Group: Type")],
-                                lambda e: self.set_group(e.control.value), 160)]
+                                lambda e: self.set_add_to(e.control.value), 190)]
+        tools.append(self.sort_tools)
         tools.append(_dropdown(self.row_size, [(k, f"Rows: {k}") for k in ROW_SIZES],
                                lambda e: self.set_row_size(e.control.value), 150))
         # Headings with a drag handle between each two, in place of the rows' 8 pixel spacing
@@ -596,20 +600,23 @@ class DecksPage:
             secondary_items=[ft.PopupMenuItem(content="Reset column widths", on_click=lambda e: self.reset_columns())],
             secondary_trigger=ft.ContextMenuTrigger.DOWN)
         return ft.Column([
-            ft.Container(ft.Row(tools, spacing=8), padding=10, border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE))),
+            ft.Container(ft.Row(tools, spacing=8, wrap=True, run_spacing=8), padding=10, border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE))),
             self.warn_box, header, self.deck_rows], spacing=0, expand=True)
 
     def _fill_deck(self, s):
         # The list's rows, into the same list (so it keeps its scroll position)
         self.warn_box.content = (ft.Container(_warn(s["problems"]), padding=ft.Padding.only(left=10, right=10, top=8, bottom=8))
                                  if s["problems"] else None)
+        self.sort_tools.controls = sort_controls.toolbar(self.sorting)
         rows, self.row_boxes, self.row_lines = [], {}, []
         for title, group in self._groups(s):
+            folded = title in self.sorting.folded
             rows.append(ft.Container(
-                ft.Text(f"{title} — {sum(e['quantity'] for e in group)}", font_family=theme.TITLE_FONT, size=12.5,
-                        weight=ft.FontWeight.W_600, color=theme.GOLD),
-                bgcolor=theme.COLORS["surface_container_low"], padding=ft.Padding.symmetric(horizontal=10, vertical=6)))
-            rows += [self._deck_row(e, s) for e in group]
+                ft.Text(f"{'▸' if folded else '▾'} {card_sorting.heading(title, group)}", font_family=theme.TITLE_FONT,
+                        size=12.5, weight=ft.FontWeight.W_600, color=theme.GOLD),
+                bgcolor=theme.COLORS["surface_container_low"], padding=ft.Padding.symmetric(horizontal=10, vertical=6),
+                on_click=lambda e, title=title: self.sorting.toggle(title), tooltip="Click to fold or unfold"))
+            rows += [] if folded else [self._deck_row(e, s) for e in group]
         if not s["entries"]:
             rows.append(ft.Container(ft.Text("No cards yet: quick add above, or pick some from the right.", color=theme.MUTED),
                                      padding=20))
@@ -620,8 +627,8 @@ class DecksPage:
         self.detail_box.content = self._detail(self.s)  # its Add button names the section
         self.page.update()
 
-    def set_group(self, group):
-        self.group = group
+    def _sorted(self):
+        # The sort, order or grouping changed, or a group was folded
         self._fill_deck(self.s)
         self.page.update()
 
@@ -663,25 +670,9 @@ class DecksPage:
                 cell.width = width
         self.page.update()
 
-    @staticmethod
-    def _front_type(entry):
-        front = (entry["type_line"] or "").split("//")[0]
-        return next((t for t in formats.CARD_TYPES if t in front), "Other")
-
     def _groups(self, s):
-        entries, is_deck = s["entries"], s["is_deck"]
-        if not is_deck:
-            return [("Cards", entries)] if entries else []
-        if self.group == "Type":
-            main = [e for e in entries if e["section"] == "Main"]
-            groups = [("Commander", [e for e in entries if e["section"] == "Commander"])]
-            groups += [(_type_title(t), [e for e in main if self._front_type(e) == t]) for t in formats.CARD_TYPES + ["Other"]]
-            groups += [(SECTION_TITLES[sec], [e for e in entries if e["section"] == sec])
-                       for sec in SECTIONS if sec not in ("Commander", "Main")]
-            return [(t, g) for t, g in groups if g]
-        groups = [(SECTION_TITLES.get(sec, sec), [e for e in entries if e["section"] == sec])
-                  for sec in SECTIONS + sorted({e["section"] for e in entries} - set(SECTIONS))]
-        return [(t, g) for t, g in groups if g or t == "Main Deck"]
+        # [(title, entries)] in the list's sort and grouping; a binder's or wishlist's one group is "Cards"
+        return [(title or "Cards", group) for title, group in self.sorting.arrange(s["entries"])]
 
     def _deck_row(self, e, s):
         status = s["statuses"].get(e["id"])

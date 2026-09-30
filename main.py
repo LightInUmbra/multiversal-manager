@@ -30,6 +30,8 @@ import trends
 from add_card_dialog import CardDialog
 from import_review_dialog import count as _count, start_import
 from card_image import CardImage
+import sort_bar
+from sort_bar import SortBar
 from charts import HistoryChart
 
 # Constants
@@ -51,6 +53,11 @@ COLUMNS = ["Name", "Set", "#", "Finish", "Cond.", "Lang.", "Qty", "Price", "Tota
 
 ID_ROLE = Qt.ItemDataRole.UserRole          # database id, stored on the Name cell
 PERCENT_ROLE = Qt.ItemDataRole.UserRole + 1  # % price change, stored on the Change cell
+# The sort each column's header picks; the ones card_sorting doesn't have are this table's own
+COLUMN_SORTS = {NAME_COL: "Name", SET_COL: "Set", NUMBER_COL: "Set", FINISH_COL: "Finish",
+                CONDITION_COL: "Condition", LANGUAGE_COL: "Language", QTY_COL: "Quantity", PRICE_COL: "Price",
+                TOTAL_COL: "Total", CHANGE_COL: "Change"}
+COLUMN_ONLY_SORTS = ["Finish", "Condition", "Language", "Total", "Change"]
 
 
 def _item(value, align_right=False):
@@ -130,6 +137,12 @@ class MainWindow(QMainWindow):
         filter_row.addWidget(self.filter_input, stretch=1)
         filter_row.addWidget(QLabel("Price change over:"))
         filter_row.addWidget(self.period_combo)
+        # Sort and group (card_sorting.py); clicking a column's header sorts by it too
+        self._folded = set()  # groups folded away
+        self.sort_bar = SortBar("collection", "collection", extra_sorts=COLUMN_ONLY_SORTS)
+        self.sort_bar.changed.connect(self.populate_table)
+        filter_row.addSpacing(12)
+        filter_row.addWidget(self.sort_bar)
 
         # Collection table
         self.table = QTableWidget(0, len(COLUMNS))
@@ -144,12 +157,13 @@ class MainWindow(QMainWindow):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(SET_COL, QHeaderView.ResizeMode.Stretch)
-        self.table.setSortingEnabled(True)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(lambda column: self.sort_bar.pick(COLUMN_SORTS[column]))
         money_delegate = MoneyDelegate(self.table)
         self.table.setItemDelegateForColumn(PRICE_COL, money_delegate)
         self.table.setItemDelegateForColumn(TOTAL_COL, money_delegate)
         self.table.setItemDelegateForColumn(CHANGE_COL, ChangeDelegate(self.table))
-        self.table.sortByColumn(NAME_COL, Qt.SortOrder.AscendingOrder)
+        self.table.cellClicked.connect(self.on_cell_clicked)
         self.table.itemSelectionChanged.connect(self.show_selected_card)
         self.table.itemChanged.connect(self.on_item_changed)
         # Delete key removes the selected rows, but only while the table has focus
@@ -491,14 +505,20 @@ class MainWindow(QMainWindow):
         self._changes = trends.compute_changes(rows, db.get_past_prices(self.period_days()))
         selected_ids = set(self.selected_ids())
 
-        # Sorting and itemChanged are paused while filling, otherwise rows
-        # jump around mid-fill and every setItem looks like a user edit
-        self.table.setSortingEnabled(False)
-        self.table.blockSignals(True)
-        self.table.setRowCount(0)
-        self.table.setRowCount(len(rows))
+        # The rows in the chosen order and groups, each group under a heading row
+        groups = self.sort_bar.arrange(rows, self._column_sort_keys(), look_up_rules=True)
+        lines = sort_bar.table_lines(groups)
 
-        for row_index, row in enumerate(rows):
+        # itemChanged is paused while filling, otherwise every setItem looks like a user edit
+        self.table.blockSignals(True)
+        self.table.clearSpans()
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(lines))
+
+        for row_index, (title, row) in enumerate(lines):
+            if title is not None:
+                sort_bar.set_heading(self.table, row_index, title, row, self._folded)
+                continue
             name_item = _item(row["name"])
             name_item.setData(ID_ROLE, row["id"])
             if row["notes"]:
@@ -529,7 +549,7 @@ class MainWindow(QMainWindow):
             self.table.setItem(row_index, CHANGE_COL, self._change_item(row))
 
         self.table.blockSignals(False)
-        self.table.setSortingEnabled(True)
+        sort_bar.show_sort_indicator(self.table, COLUMN_SORTS, self.sort_bar.view)
 
         # Keep the previous selection where possible
         self.select_ids(selected_ids)
@@ -538,6 +558,19 @@ class MainWindow(QMainWindow):
         # Lists show how many of their cards you own, so keep an open Lists window current
         if getattr(self, "_lists", None) is not None:
             self._lists.reload()
+
+    def _column_sort_keys(self):
+        # The sorts only this table has, by its columns
+        conditions = list(copy_details.CONDITIONS)
+        return {"Finish": lambda r: r["foil"],
+                "Condition": lambda r: conditions.index(r["condition"]) if r["condition"] in conditions else 99,
+                "Language": lambda r: r["language"],
+                "Total": lambda r: (r["price"] or 0) * r["quantity"],
+                "Change": lambda r: self._changes[r["id"]].each if r["id"] in self._changes else None}
+
+    def on_cell_clicked(self, row_index, column):
+        if sort_bar.toggle_heading(self.table, row_index, self._folded):
+            self.apply_filter()
 
     def _change_item(self, row):
         change = self._changes.get(row["id"])
@@ -607,11 +640,13 @@ class MainWindow(QMainWindow):
 
     def apply_filter(self):
         needle = self.filter_input.text().strip().lower()
-        for row_index in range(self.table.rowCount()):
-            row = self._rows_by_id[self.table.item(row_index, NAME_COL).data(ID_ROLE)]
-            haystack = " ".join(str(row[key] or "") for key in
-                                ("name", "set_name", "set_code", "artist", "notes")).lower()
-            self.table.setRowHidden(row_index, bool(needle) and needle not in haystack)
+
+        def matches(card_id):
+            row = self._rows_by_id[card_id]
+            return not needle or needle in " ".join(str(row[key] or "") for key in
+                                                    ("name", "set_name", "set_code", "artist", "notes")).lower()
+
+        sort_bar.hide_rows(self.table, ID_ROLE, matches, self._folded)
 
     def update_summary(self):
         unique, count, value = db.get_summary()
@@ -642,7 +677,8 @@ class MainWindow(QMainWindow):
 
     def selected_ids(self):
         rows = {index.row() for index in self.table.selectionModel().selectedRows()}
-        return [self.table.item(r, NAME_COL).data(ID_ROLE) for r in sorted(rows)]
+        ids = [self.table.item(r, NAME_COL).data(ID_ROLE) for r in sorted(rows)]
+        return [card_id for card_id in ids if card_id is not None]  # not group headings
 
     def on_item_changed(self, item):
         if item.column() != QTY_COL:

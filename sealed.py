@@ -9,7 +9,7 @@ you -- there's no free source of sealed prices to fill them in.
 from contextlib import contextmanager
 from urllib.parse import quote_plus
 
-from PySide6.QtCore import Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QItemSelectionModel, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import QAction, QCursor, QDesktopServices, QKeySequence
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFormLayout, QLabel, QLineEdit, QComboBox, QTableWidget,
@@ -18,15 +18,22 @@ from PySide6.QtWidgets import (
 )
 
 import background
+import card_sorting
 import database as db
 import mtgjson
 import price_changes
+import sort_bar
 import scryfall
 import trends
+from sort_bar import SortBar
 
 COLUMNS = ["Product", "Set", "Type", "Qty", "Paid (each)", "Value (each)", "Total Value", "Gain / Loss", "Notes"]
 (NAME_COL, SET_COL, TYPE_COL, QTY_COL, PAID_COL, VALUE_COL, TOTAL_COL, GAIN_COL, NOTES_COL) = range(len(COLUMNS))
 ID_ROLE = Qt.ItemDataRole.UserRole
+# The sort each column's header picks; the ones card_sorting doesn't have are this table's own
+COLUMN_SORTS = {NAME_COL: "Name", SET_COL: "Set", TYPE_COL: "Product type", QTY_COL: "Quantity", PAID_COL: "Paid",
+                VALUE_COL: "Price", TOTAL_COL: "Total", GAIN_COL: "Gain / Loss", NOTES_COL: "Notes"}
+COLUMN_ONLY_SORTS = list(card_sorting.SEALED_COLUMN_KEYS)
 SORT_ROLE = Qt.ItemDataRole.UserRole + 1
 
 
@@ -286,8 +293,14 @@ class SealedPanel(QWidget):
         header.setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         header.setSectionResizeMode(NAME_COL, QHeaderView.ResizeMode.Stretch)
         header.setSectionResizeMode(NOTES_COL, QHeaderView.ResizeMode.Stretch)
-        self.table.setSortingEnabled(True)
-        self.table.sortByColumn(NAME_COL, Qt.SortOrder.AscendingOrder)
+        # Sort and group (card_sorting.py); clicking a column's header sorts by it too
+        self._folded = set()
+        self.sort_bar = SortBar("sealed", "sealed", extra_sorts=COLUMN_ONLY_SORTS)
+        self.sort_bar.changed.connect(self.reload)
+        header.setSortIndicatorShown(True)
+        header.sectionClicked.connect(lambda column: self.sort_bar.pick(COLUMN_SORTS[column]))
+        self.table.cellClicked.connect(
+            lambda row, _: sort_bar.toggle_heading(self.table, row, self._folded) and self.apply_filter())
         self.table.cellDoubleClicked.connect(lambda row, _: self.edit(self.table.item(row, NAME_COL).data(ID_ROLE)))
         self.table.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.table.customContextMenuRequested.connect(self.show_menu)
@@ -315,7 +328,11 @@ class SealedPanel(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(self.filter_input)
+        top = QHBoxLayout()
+        top.addWidget(self.filter_input, stretch=1)
+        top.addSpacing(12)
+        top.addWidget(self.sort_bar)
+        layout.addLayout(top)
         layout.addWidget(self.table, stretch=1)
         layout.addLayout(buttons)
         self.reload()
@@ -325,19 +342,26 @@ class SealedPanel(QWidget):
     def reload(self, select_id=None):
         rows = db.get_sealed()
         self._rows = {row["id"]: row for row in rows}
-        self.table.setSortingEnabled(False)
+        selected = set(self.selected_ids())
         with _filling(self.table):
-            self._fill(rows)
-        self.table.setSortingEnabled(True)
+            self._fill(sort_bar.table_lines(self.sort_bar.arrange(rows, card_sorting.SEALED_COLUMN_KEYS)))
+        sort_bar.show_sort_indicator(self.table, COLUMN_SORTS, self.sort_bar.view)
         self.apply_filter()
+        for sealed_id in selected if select_id is None else ():
+            self.select(sealed_id, only=False)
         if select_id is not None:
             self.select(select_id)
         self._update_buttons()
         self.update_summary()
 
-    def _fill(self, rows):
-        self.table.setRowCount(len(rows))
-        for index, row in enumerate(rows):
+    def _fill(self, lines):
+        self.table.clearSpans()
+        self.table.setRowCount(0)
+        self.table.setRowCount(len(lines))
+        for index, (title, row) in enumerate(lines):
+            if title is not None:
+                sort_bar.set_heading(self.table, index, title, row, self._folded, noun="item")
+                continue
             change = gain(row)
             items = [
                 _item(row["name"]), _item(row["set_name"] or ""), _item(row["product_type"] or ""),
@@ -360,10 +384,13 @@ class SealedPanel(QWidget):
 
     def apply_filter(self):
         needle = self.filter_input.text().strip().lower()
-        for index in range(self.table.rowCount()):
-            row = self._rows[self.table.item(index, NAME_COL).data(ID_ROLE)]
+
+        def matches(sealed_id):
+            row = self._rows[sealed_id]
             haystack = " ".join(str(row[k] or "") for k in ("name", "set_name", "set_code", "product_type", "notes"))
-            self.table.setRowHidden(index, bool(needle) and needle not in haystack.lower())
+            return not needle or needle in haystack.lower()
+
+        sort_bar.hide_rows(self.table, ID_ROLE, matches, self._folded)
 
     def update_summary(self):
         count, value, paid, value_of_paid = db.sealed_summary()
@@ -380,13 +407,20 @@ class SealedPanel(QWidget):
         self.changed.emit()
 
     def selected_ids(self):
-        return [self.table.item(index.row(), NAME_COL).data(ID_ROLE)
-                for index in self.table.selectionModel().selectedRows()]
+        ids = [self.table.item(index.row(), NAME_COL).data(ID_ROLE)
+               for index in self.table.selectionModel().selectedRows()]
+        return [sealed_id for sealed_id in ids if sealed_id is not None]  # not group headings
 
-    def select(self, sealed_id):
+    def select(self, sealed_id, only=True):
+        # only=False adds it to the selection
         for index in range(self.table.rowCount()):
             if self.table.item(index, NAME_COL).data(ID_ROLE) == sealed_id:
-                self.table.selectRow(index)
+                if only:
+                    self.table.selectRow(index)
+                else:
+                    self.table.selectionModel().select(
+                        self.table.model().index(index, NAME_COL),
+                        QItemSelectionModel.SelectionFlag.Select | QItemSelectionModel.SelectionFlag.Rows)
                 self.table.scrollToItem(self.table.item(index, NAME_COL))
 
     def _update_buttons(self):
@@ -419,8 +453,8 @@ class SealedPanel(QWidget):
 
     def show_menu(self, position):
         index = self.table.indexAt(position)
-        if not index.isValid():
-            return
+        if not index.isValid() or self.table.item(index.row(), NAME_COL).data(ID_ROLE) is None:
+            return  # nothing, or a group's heading
         if not self.table.selectionModel().isRowSelected(index.row()):
             self.table.selectRow(index.row())
         row = self._rows[self.table.item(index.row(), NAME_COL).data(ID_ROLE)]

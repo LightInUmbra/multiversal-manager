@@ -7,9 +7,8 @@ from PySide6.QtWidgets import (
 )
 
 import database as db
-import scryfall
 from charts import HistoryChart
-from price_changes import Change, collection_change, compute_changes, format_change  # noqa: F401
+from price_changes import Change, collection_change, compute_changes, format_change, movers, mover_name  # noqa: F401
 
 # (label, days back; None = since the first recorded price)
 PERIODS = [("24 hours", 1), ("7 days", 7), ("30 days", 30), ("90 days", 90), ("All time", None)]
@@ -109,21 +108,14 @@ class TrendsDialog(QDialog):
             self.summary_label.setStyleSheet(
                 "font-size: 14px; font-weight: bold;" + (f" color: {color.name()};" if color else ""))
 
-        ranked = sorted(changes.items(), key=lambda item: item[1].total)
-        losers = [item for item in ranked if item[1].total < -0.004][:self.MOVERS_SHOWN]
-        gainers = [item for item in reversed(ranked) if item[1].total > 0.004][:self.MOVERS_SHOWN]
+        gainers, losers = movers(changes, self.MOVERS_SHOWN)
         self._fill(self.gainers, gainers, rows)
         self._fill(self.losers, losers, rows)
 
     def _fill(self, table, movers, rows):
         table.setRowCount(len(movers))
         for index, (card_id, change) in enumerate(movers):
-            row = rows[card_id]
-            name = row["name"] + (f" ({scryfall.finish_label(row['foil']).lower()})" if row["foil"] else "")
-            if row["set_code"]:
-                name += f"  ·  {row['set_code']}"
-            if change.quantity > 1:
-                name += f"  ×{change.quantity}"
+            name = mover_name(rows[card_id], change)
             price = QTableWidgetItem(f"${change.past:,.2f} → ${change.now:,.2f}")
             total = QTableWidgetItem(format_change(change.total, change.percent))
             total.setForeground(change_color(change.total))

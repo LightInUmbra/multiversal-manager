@@ -5,14 +5,17 @@ import time
 
 import flet as ft
 
+import card_sorting
 import copy_details
 import database as db
 import interactions
 import price_changes
 import scryfall
+import sort_controls
 import theme
 
 TABS = ["Cards", "Decks", "Rules", "Finance"]
+COLUMN_ONLY_SORTS = ["Condition", "Total", "Change"]  # the Cards table's own sorts, by its columns
 DOUBLE_CLICK = 0.5  # seconds between two clicks on a row that open Edit
 DETAIL_WIDTH = 300  # the selected card's panel
 PAGE_PADDING = 28
@@ -38,9 +41,9 @@ def _set_code(row):
     return (row["set_code"] or "").upper()
 
 
-def header(active, on_tab, on_sync, email, menu_items):
+def header(active, on_tab, on_sync, email, menu_items, on_home):
     """The stripe and navigation bar: logo, the tabs as links, Sync and the account menu.
-    menu_items: [(label, on_click)] for the account menu."""
+    menu_items: [(label, on_click)] for the account menu; on_home: the logo's click."""
     def link(index, label):
         on = index == active
         return ft.Container(
@@ -56,9 +59,10 @@ def header(active, on_tab, on_sync, email, menu_items):
                                 bgcolor=theme.COLORS["primary_container"], radius=16),
         items=[ft.PopupMenuItem(content=label, on_click=action) for label, action in menu_items])
     bar = ft.Container(
-        ft.Row([ft.Icon(ft.Icons.AUTO_STORIES, color=theme.GOLD, size=26),
-                ft.Text("Multiversal Manager", font_family=theme.TITLE_FONT, size=21, weight=ft.FontWeight.W_700,
-                        color=theme.GOLD),
+        ft.Row([ft.Container(ft.Row([ft.Icon(ft.Icons.AUTO_STORIES, color=theme.GOLD, size=26),
+                                     ft.Text("Multiversal Manager", font_family=theme.TITLE_FONT, size=21,
+                                             weight=ft.FontWeight.W_700, color=theme.GOLD)], spacing=8),
+                             on_click=on_home, tooltip="Your collection", ink=False),
                 ft.Container(width=36), *[link(i, label) for i, label in enumerate(TABS)],
                 ft.Container(expand=True), theme.button("⟳  Sync", on_sync), avatar],
                vertical_alignment=ft.CrossAxisAlignment.CENTER, spacing=8),
@@ -92,9 +96,12 @@ class CardsPage:
     """The collection: summary tiles, search and actions, the table and the selected card.
     add(), edit(row), refresh_prices(e) and import_cards() are main.py's; remove asks here first."""
 
-    def __init__(self, page, toast, add, edit, refresh_prices, import_cards):
-        self.page, self.toast, self.edit = page, toast, edit
-        self.sort = {"column": 0, "ascending": True}
+    def __init__(self, page, toast, add, edit, refresh_prices, import_cards, busy=None):
+        self.page, self.toast, self.edit, self.busy = page, toast, edit, busy
+        # Sort and group (card_sorting.py); a column's heading sorts by it too
+        self.sorting = sort_controls.SortState("collection", "collection", lambda: self.refresh(),
+                                               extra_sorts=COLUMN_ONLY_SORTS)
+        self.sort_row = ft.Row(spacing=8)
         self.selected = {"id": None, "clicked_at": 0}
         self.rows = {}  # card id -> DataRow, to move the selection without rebuilding the table
         self.search = ft.TextField(hint_text="Filter by name, set or artist…", prefix_icon=ft.Icons.SEARCH, dense=True,
@@ -105,7 +112,8 @@ class CardsPage:
         self.table = ft.ListView(expand=True)
         self.detail = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=8)
         self.cards_area = ft.Column([
-            ft.Row([self.search, ft.Container(expand=True), theme.button("Import…", lambda e: import_cards()),
+            ft.Row([self.search, self.sort_row, ft.Container(expand=True),
+                    theme.button("Import…", lambda e: import_cards()),
                     theme.button("Refresh Prices", refresh_prices),
                     theme.button("+ Add Card", lambda e: add(), primary=True)]),
             ft.Row([theme.panel(self.table, expand=True),
@@ -114,6 +122,7 @@ class CardsPage:
         ], spacing=16, expand=True)
         # Cards and sealed product each get a tab, like the desktop; the combined total shows beside them
         self.sealed = None  # main.py's web_sealed.SealedPanel (it needs this page's total, so it comes after)
+        self.trends = None  # main.py's web_trends.TrendsPanel
         self.showing = {"tab": "Cards"}
         self.tabs = ft.Row(spacing=0)
         self.total = ft.Text(size=13, color=theme.MUTED)
@@ -132,27 +141,39 @@ class CardsPage:
             return ft.Container(ft.Text(label, size=14, weight=ft.FontWeight.W_600, color=theme.GOLD if on else theme.MUTED),
                                 padding=ft.Padding.symmetric(horizontal=14, vertical=6), on_click=lambda e: self.show(label),
                                 border=ft.Border.only(bottom=ft.BorderSide(2, theme.GOLD if on else theme.LINE)))
-        self.tabs.controls = [tab("Cards"), tab("Sealed")]
+        self.tabs.controls = [tab("Cards"), tab("Sealed"), tab("Trends")]
 
     def show(self, label):
         self.showing["tab"] = label
         self.draw_tabs()
-        self.area.content = self.sealed.view if label == "Sealed" else self.cards_area
-        self.sealed.refresh() if label == "Sealed" else self.refresh()
+        other = {"Sealed": self.sealed, "Trends": self.trends}.get(label)
+        self.area.content = other.view if other else self.cards_area
+        other.refresh() if other else self.refresh()
+
+    def home(self):
+        # Back to the Cards tab (the header's logo); main.py then shows and refreshes the page
+        self.showing["tab"] = "Cards"
+        self.draw_tabs()
+        self.area.content = self.cards_area
 
     def update_total(self):
         # The desktop's "Collection total": cards and sealed product, separately and together
         cards, sealed = db.get_summary()[2], db.sealed_summary()[1]
         self.total.value = f"Collection total: ${cards + sealed:,.2f}   (cards ${cards:,.2f} + sealed ${sealed:,.2f})"
 
-    # The columns: (heading, sort key, numeric)
-    COLUMNS = [("Name", lambda r, c: r["name"].lower(), False),
-               ("Set", lambda r, c: r["set_name"].lower(), False),
-               ("Cond", lambda r, c: (r["condition"], r["foil"]), False),
-               ("Qty", lambda r, c: r["quantity"], True),
-               ("Price", lambda r, c: r["price"] or 0, True),
-               ("Total", lambda r, c: _total(r) or 0, True),
-               (f"{CHANGE_DAYS}d", lambda r, c: c[r["id"]].percent or 0 if r["id"] in c else float("-inf"), True)]
+    # The columns: (heading, the sort its heading picks, numeric)
+    COLUMNS = [("Name", "Name", False), ("Set", "Set", False), ("Cond", "Condition", False),
+               ("Qty", "Quantity", True), ("Price", "Price", True), ("Total", "Total", True),
+               (f"{CHANGE_DAYS}d", "Change", True)]
+
+    @staticmethod
+    def column_sort_keys(changes):
+        # The sorts only this table has, by its columns
+        conditions = list(copy_details.CONDITIONS)
+        return {"Condition": lambda r: (conditions.index(r["condition"]) if r["condition"] in conditions else 99,
+                                        r["foil"]),
+                "Total": _total,
+                "Change": lambda r: changes[r["id"]].percent if r["id"] in changes else None}
 
     def refresh(self, select_id=...):
         if select_id is not ...:
@@ -164,8 +185,14 @@ class CardsPage:
         if self.showing["tab"] == "Sealed" and self.sealed is not None:
             self.sealed.refresh()  # the sealed tab is showing; it updates the total itself
             return
+        if self.showing["tab"] == "Trends" and self.trends is not None:
+            self.show_tiles(everything, changes)
+            self.update_total()
+            self.trends.refresh()
+            return
         self.show_tiles(everything, changes)
         self.update_total()
+        self.sort_row.controls = sort_controls.toolbar(self.sorting)
         self.table.controls = [self.card_table(rows, changes)]
         if self.selected["id"] not in self.rows:
             self.selected["id"] = None
@@ -192,8 +219,7 @@ class CardsPage:
         ]
 
     def card_table(self, rows, changes):
-        heading, key, _ = self.COLUMNS[self.sort["column"]]
-        rows = sorted(rows, key=lambda r: key(r, changes), reverse=not self.sort["ascending"])
+        groups = self.sorting.arrange(rows, self.busy, self.column_sort_keys(changes))
         area = (self.page.width or 1200) - 2 * PAGE_PADDING - DETAIL_WIDTH - 20
         name_width = max(140, (area - FIXED_COLUMNS) * 0.45)
         set_width = max(140, (area - FIXED_COLUMNS) * 0.55)
@@ -211,8 +237,7 @@ class CardsPage:
             return text(f"{'+' if c.percent >= 0 else '−'}{abs(c.percent):.1f}%",
                         color=theme.GAIN if c.each > 0.004 else theme.LOSS if c.each < -0.004 else theme.MUTED)
 
-        self.rows.clear()
-        for r in rows:
+        def card_row(r):
             finish = scryfall.finish_label(r["foil"])
             labels = [theme.pill(r["condition"])] + ([theme.pill(finish, ["#F3E3A6", "#9D8CFF"])] if finish else [])
             self.rows[r["id"]] = ft.DataRow(selected=r["id"] == self.selected["id"], cells=[
@@ -222,8 +247,30 @@ class CardsPage:
                 cell(ft.Row(labels, spacing=4), r),
                 cell(text(str(r["quantity"])), r), cell(text(_money(r["price"])), r),
                 cell(text(_money(_total(r))), r), cell(change(r), r)])
+            return self.rows[r["id"]]
+
+        def heading(title, members):
+            # A group's heading row, lined up with the columns: its name, copies and value
+            copies, value = card_sorting.totals(members)
+            arrow = "▸" if title in self.sorting.folded else "▾"
+            bold = dict(weight=ft.FontWeight.W_600, color=theme.GOLD)
+            return ft.DataRow(cells=[
+                ft.DataCell(text(f"{arrow} {title}", name_width, **bold), on_tap=lambda e: self.sorting.toggle(title)),
+                ft.DataCell(text(f"{len(members)} printing{'s' if len(members) != 1 else ''}", color=theme.MUTED)),
+                ft.DataCell(text("")), ft.DataCell(text(str(copies), **bold)), ft.DataCell(text("")),
+                ft.DataCell(text(_money(value), **bold)), ft.DataCell(text(""))])
+
+        self.rows.clear()
+        lines = []
+        for title, members in groups:
+            if title is not None:
+                lines.append(heading(title, members))
+                if title in self.sorting.folded:
+                    continue
+            lines += [card_row(r) for r in members]
+        column = next((i for i, (_, sort, _) in enumerate(self.COLUMNS) if sort == self.sorting.view["sort"]), None)
         return ft.DataTable(
-            sort_column_index=self.sort["column"], sort_ascending=self.sort["ascending"],
+            sort_column_index=column, sort_ascending=not self.sorting.view["descending"],
             heading_row_height=40, data_row_min_height=36, data_row_max_height=36,
             column_spacing=22, horizontal_margin=14, divider_thickness=1,
             horizontal_lines=ft.BorderSide(1, theme.LINE),
@@ -231,11 +278,10 @@ class CardsPage:
             data_row_color={ft.ControlState.SELECTED: theme.COLORS["primary_container"]},
             columns=[ft.DataColumn(ft.Text(label.upper()), numeric=numeric, on_sort=self.sorted_by)
                      for label, _, numeric in self.COLUMNS],
-            rows=list(self.rows.values()))
+            rows=lines)
 
     def sorted_by(self, e):
-        self.sort.update(column=e.column_index, ascending=e.ascending)
-        self.refresh()
+        self.sorting.pick(self.COLUMNS[e.column_index][1])
 
     def clicked(self, row):
         # A second click on the same row soon after is a double click, which edits, like the

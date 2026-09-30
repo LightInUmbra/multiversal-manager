@@ -59,3 +59,22 @@ def test_shown_filters_and_sorts_like_the_desktop():
     assert names(market.shown(entries, "", 0.0, market.SHOW_ALL, market.PRICE_COL, True)) == ["Up", "New", "Down",
                                                                                               "Penny"]
     assert names(market.shown(entries, "pen", 0.0, market.SHOW_ALL, market.NAME_COL, False)) == ["Penny"]
+
+
+def test_collection_trends_from_the_summary():
+    import price_changes
+    summary = market.build(date(2026, 9, 30), [_printing("a"), _printing("b", name="Shock", finishes=("nonfoil",))],
+                           [("a", 0, "2026-09-23", 1.5), ("b", 0, "2026-09-23", 3.0)])
+    cards = [{"id": 1, "scryfall_id": "a", "foil": 0, "price": 2.0, "quantity": 4, "name": "Opt", "set_code": "xln"},
+             {"id": 2, "scryfall_id": "b", "foil": 0, "price": 2.5, "quantity": 1, "name": "Shock", "set_code": "xln"},
+             {"id": 3, "scryfall_id": "a", "foil": 1, "price": 5.0, "quantity": 1, "name": "Opt", "set_code": "xln"},
+             {"id": 4, "scryfall_id": None, "foil": 0, "price": None, "quantity": 2, "name": "Proxy", "set_code": ""}]
+    past = market.past_prices(summary, cards, 7)
+    assert past == {1: 1.5, 2: 3.0}  # the foil has no price a week ago; the proxy isn't in the market
+    history = market.value_history(summary, cards)
+    # Today's value; a week ago the Opts were $1.50 and Shock $3, the foil counted at today's $5
+    assert history[-1] == ("2026-09-30", 15.5) and ("2026-09-23", 14.0) in history
+    gainers, losers = price_changes.movers(price_changes.compute_changes(cards, past), 15)
+    assert [card_id for card_id, _ in gainers] == [1] and [card_id for card_id, _ in losers] == [2]
+    assert price_changes.mover_name(cards[0], gainers[0][1]) == "Opt  ·  xln  ×4"
+    assert market.row(summary, market.index_of(summary, cards[2]), 0)["foil"] == 1

@@ -9,6 +9,7 @@ import database as db
 import deck_stats
 import formats
 import scryfall
+import sort_controls
 import web_decks
 from importer import SECTIONS
 
@@ -104,12 +105,15 @@ class PhoneRecommendations(web_decks.DecksPage):
 
 
 class Decks:
-    def __init__(self, page, toast, busy, card_dialog):
-        self.page, self.toast, self.busy, self.card_dialog = page, toast, busy, card_dialog
+    def __init__(self, page, toast, busy, card_dialog, scan=None):
+        # scan(list id): main.py's scanner, adding into that list (None on the website: no camera)
+        self.page, self.toast, self.busy, self.card_dialog, self.scan = page, toast, busy, card_dialog, scan
         self.list_id = None  # the open list, or None for the list of lists
         self.spellbook = {}  # list id -> Commander Spellbook's reading, until the list changes
         self.mode = "cards"  # what a list shows: its "cards", "stats" or "recommended" cards
         self.recommendations = None  # PhoneRecommendations, made the first time they're shown
+        # Sort and group the open list (card_sorting.py); each list remembers its own
+        self.sorting = sort_controls.SortState("deck", "list:none", lambda: self.show_list())
         self.view = ft.Column(expand=True)
 
     def refresh(self):
@@ -222,6 +226,8 @@ class Decks:
                          if types else [])], spacing=2, expand=True),
             *([switch("recommended", ft.Icons.AUTO_AWESOME, "Recommended")] if commander else []),
             switch("stats", ft.Icons.BAR_CHART, "Stats"),
+            *([ft.IconButton(ft.Icons.DOCUMENT_SCANNER_OUTLINED, tooltip="Scan cards into this list",
+                             on_click=lambda e: self.scan(self.list_id))] if self.scan else []),
             ft.IconButton(ft.Icons.EDIT_OUTLINED, tooltip="Rename, format or delete",
                           on_click=lambda e: self.edit_list(info))], vertical_alignment=ft.CrossAxisAlignment.START)]
         if self.mode == "recommended":
@@ -244,16 +250,14 @@ class Decks:
             self.page.update()
             return
 
-        # A deck shows its Main Deck even when empty, and any other section that has cards
-        sections = SECTIONS if is_deck else [""]
-        sections = sections + sorted({e["section"] for e in entries} - set(sections))
-        for section in sections:
-            group = [e for e in entries if e["section"] == section]
-            if not group and not (is_deck and section == "Main"):
+        # The cards in the list's sort and grouping (a deck keeps its sections apart)
+        self.sorting.set_key(f"list:{self.list_id}", "deck" if is_deck else "list")
+        controls.append(ft.Row([ft.Container(expand=True), sort_controls.chip(self.page, self.sorting)]))
+        for title, group in self.sorting.arrange(entries):
+            title = title or "Cards"
+            controls.append(sort_controls.heading(self.sorting, title, group))
+            if title in self.sorting.folded:
                 continue
-            controls += [ft.Divider(height=1),
-                         ft.Text(f"{SECTION_TITLES.get(section, section)} ({sum(e['quantity'] for e in group)})",
-                                 weight=ft.FontWeight.BOLD)]
             for e in group:
                 status = statuses.get(e["id"])
                 have = owned.get(e["name"].lower(), 0)
