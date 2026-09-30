@@ -15,15 +15,21 @@ SIDE_WIDTH = 300
 COLUMNS = [("Import", 60), ("Qty", 64), ("Name", None), ("Printing", None), ("Finish", 90), ("Status", 300)]
 
 
-async def start_import(page, picker, destination, on_done, busy):
+async def start_import(page, picker, destination, on_done, busy, review=None):
     """The whole import: pick a file, confirm what was found, look the cards up, review.
     on_done(records) gets the add_card keyword dicts to save, or None if it was cancelled.
-    picker: the page's ft.FilePicker. destination says where the cards go ("your collection")."""
-    files = await picker.pick_files(dialog_title="Import Cards", file_type=ft.FilePickerFileType.CUSTOM,
-                                    allowed_extensions=EXTENSIONS, with_data=True)
+    picker: the page's ft.FilePicker. destination says where the cards go ("your collection").
+    review(page, result, on_done): the review screen, with show(); ReviewDialog by default,
+    the phone layout's is phone_import.PhoneReview."""
+    # A phone's file picker goes by file type, and .dec / .dek have none it knows, so it offers every file
+    by_extension = page.web or not page.platform.is_mobile()
+    files = await picker.pick_files(
+        dialog_title="Import Cards", with_data=True,
+        file_type=ft.FilePickerFileType.CUSTOM if by_extension else ft.FilePickerFileType.ANY,
+        allowed_extensions=EXTENSIONS if by_extension else None)
     if files:
         # The rest waits on the network, so it runs like any other handler (a thread on a computer)
-        page.run_thread(_read, page, files[0], destination, on_done, busy)
+        page.run_thread(_read, page, files[0], destination, on_done, busy, review or ReviewDialog)
 
 
 def _message(page, text):
@@ -31,7 +37,7 @@ def _message(page, text):
                                     actions=[theme.button("OK", lambda e: page.pop_dialog(), primary=True)]))
 
 
-def _read(page, file, destination, on_done, busy):
+def _read(page, file, destination, on_done, busy, review):
     try:
         rows, errors = importer.parse((file.bytes or b"").decode("utf-8-sig"), file.name)
     except UnicodeDecodeError as error:
@@ -45,7 +51,7 @@ def _read(page, file, destination, on_done, busy):
         page.pop_dialog()
         result = busy("Looking up cards on Scryfall", lambda: importer.resolve(rows))
         if result is not None:
-            ReviewDialog(page, result, on_done).show()
+            review(page, result, on_done).show()
 
     total = sum(row.quantity for row in rows)
     content = [ft.Text(f"Found {importer.count(total, 'card')} in {importer.count(len(rows), 'entry')}.\n\n"
@@ -57,7 +63,7 @@ def _read(page, file, destination, on_done, busy):
         content.append(ft.ExpansionTile(title=ft.Text("Show Details…", size=13), controls=[
             ft.Text("\n".join(errors), size=12, selectable=True)]))
     page.show_dialog(ft.AlertDialog(
-        title=ft.Text("Import"), content=ft.Column(content, tight=True, width=460),
+        title=ft.Text("Import"), content=ft.Column(content, tight=True, width=min(460, (page.width or 460) - 80)),
         actions=[theme.button("No", lambda e: (page.pop_dialog(), on_done(None))),
                  theme.button("Yes", look_up, primary=True)]))
 

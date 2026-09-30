@@ -15,7 +15,7 @@ import itertools
 import json
 import os
 import sys
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 
 import requests
 
@@ -154,9 +154,20 @@ def write(summary, path):
 RARITIES = {"c": "Common", "u": "Uncommon", "r": "Rare", "m": "Mythic", "s": "Special", "b": "Bonus"}
 
 
-def download(url=URL):
+KEEP_FOR = timedelta(hours=20)  # the phone app's copy; the workflow builds a new one daily
+
+
+def download(url=URL, cache=None):
+    """The summary. cache: a file to keep it in (the phone app's, a Path), used again while
+    it's younger than KEEP_FOR; the website has nowhere to keep it, so it downloads per visit."""
+    if cache is not None and cache.exists():
+        age = datetime.now() - datetime.fromtimestamp(cache.stat().st_mtime)
+        if age < KEEP_FOR:
+            return json.loads(gzip.decompress(cache.read_bytes()))
     response = requests.get(url, timeout=120)
     response.raise_for_status()
+    if cache is not None:
+        cache.write_bytes(response.content)
     return json.loads(gzip.decompress(response.content))
 
 
@@ -177,6 +188,16 @@ def history(summary, index):
     *_, price, past = summary["cards"][index]
     return ([((built - timedelta(days=n)).isoformat(), p / 100) for n, p in zip(summary["offsets"], past) if p]
             + [(summary["built"], price / 100)])
+
+
+def period_changes(summary, index):
+    # [(period label, price then or None, change_for)] for a row's printing, over every period
+    *_, price, past = summary["cards"][index]
+    changes = []
+    for label, days in PERIODS:
+        then = past[summary["offsets"].index(days)] / 100 or None
+        changes.append((label, then, change_for({"price": price / 100, "past": then})))
+    return changes
 
 
 def image_url(scryfall_id):

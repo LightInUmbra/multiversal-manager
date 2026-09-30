@@ -28,6 +28,8 @@ import sync  # noqa: E402
 import theme  # noqa: E402
 import web_decks  # noqa: E402
 import web_desktop  # noqa: E402
+import phone_finance  # noqa: E402
+import phone_import as phone_import_review  # noqa: E402
 import web_finance  # noqa: E402
 import web_import  # noqa: E402
 import web_rules  # noqa: E402
@@ -399,11 +401,14 @@ def main(page: ft.Page):
     page.appbar = ft.AppBar(title=ft.Text(APP_NAME), actions=[
         ft.IconButton(ft.Icons.DOCUMENT_SCANNER_OUTLINED, tooltip="Scan cards", visible=not WEB,
                       on_click=lambda e: page.run_task(open_scanner)),
-        ft.IconButton(ft.Icons.PRICE_CHANGE_OUTLINED, tooltip="Refresh prices", on_click=refresh_prices),
         ft.IconButton(ft.Icons.SYNC, tooltip="Sync now", on_click=sync_now),
-        ft.IconButton(ft.Icons.ACCOUNT_CIRCLE_OUTLINED, tooltip="Sync account", on_click=account),
-        ft.IconButton(ft.Icons.DESKTOP_WINDOWS_OUTLINED, tooltip="Desktop layout", visible=page.web,
-                      on_click=lambda e: set_layout(True)),
+        # The occasional ones, like the desktop's menus
+        ft.PopupMenuButton(icon=ft.Icons.MORE_VERT, tooltip="More", items=[
+            ft.PopupMenuItem(content="Sync account…", on_click=account),
+            ft.PopupMenuItem(content="Import cards…", on_click=lambda e: phone_import()),
+            ft.PopupMenuItem(content="Refresh prices", on_click=refresh_prices),
+            *([ft.PopupMenuItem(content="Desktop layout", on_click=lambda e: set_layout(True))] if page.web else []),
+        ]),
     ])
     deck_builder = decks.Decks(page, toast, busy, card_dialog)
     body = ft.Container(expand=True)
@@ -514,8 +519,12 @@ def main(page: ft.Page):
             toast("Import cancelled, nothing was added.")
             return
         card_ids = db.add_cards(records)
-        cards_page.search.value = ""
-        cards_page.refresh(select_id=card_ids[0] if card_ids else None)
+        if desktop_layout():
+            cards_page.search.value = ""
+            cards_page.refresh(select_id=card_ids[0] if card_ids else None)
+        else:
+            search.value = ""
+            show_cards()
         cards = sum(record["quantity"] for record in records)
         toast(f"Imported {importer.count(cards, 'card')} ({importer.count(len(records), 'entry')}).")
 
@@ -524,9 +533,33 @@ def main(page: ft.Page):
 
     rules_view = rules_tab.Rules(page, toast, busy)
     rules_page = web_rules.RulesPage(page, toast, busy)  # the desktop layout's
-    finance_page = web_finance.FinancePage(page, busy)  # the desktop layout's only (for now)
+    finance_page = web_finance.FinancePage(page, busy)  # the desktop layout's
+    # The phone app keeps the day's market file; the website downloads it per visit
+    finance_view = phone_finance.PhoneFinance(page, toast, busy,
+                                              cache=None if WEB else Path(db.DB_NAME).with_name("market.json.gz"))
     # The tabs after Collection, in the bar's order; each has view, refresh() and back()
-    tabs = [deck_builder, rules_view]
+    tabs = [deck_builder, rules_view, finance_view]
+
+    # The phone layout's import: its review takes the Collection's place, like the scanner
+    reviewing = {"review": None}
+
+    def open_review(review):
+        reviewing["review"] = review
+        page.navigation_bar.selected_index = 0
+        page.navigation_bar.visible = page.floating_action_button.visible = False
+        body.content = review.view
+        page.update()
+
+    def close_review():
+        reviewing["review"] = None
+        page.navigation_bar.visible = page.floating_action_button.visible = True
+        body.content = collection_view()
+        page.update()
+
+    def phone_import():
+        page.run_task(web_import.start_import, page, file_picker, "your collection", imported, busy,
+                      lambda page, result, on_done: phone_import_review.PhoneReview(
+                          page, result, on_done, (open_review, close_review)))
 
     scanner = scan.Scanner(page, toast, on_added=show_cards)
 
@@ -551,18 +584,19 @@ def main(page: ft.Page):
         index = tab_index()
         # The desktop layout has its own pages where they're built (Cards, Decks), else the phone's
         pages = [collection_view()] + ([decks_page, rules_page, finance_page] if desktop_layout()
-                                       else [deck_builder, rules_view])
+                                       else [deck_builder, rules_view, finance_view])
         current = pages[index]
         body.content = current if index == 0 else current.view
         # The phone's + button, on Collection and Decks; the desktop layout has buttons instead
-        page.floating_action_button.visible = not desktop_layout() and index != 2
+        page.floating_action_button.visible = not desktop_layout() and index in (0, 1)
         show_header()
         current.refresh() if index else show_cards()
 
     page.navigation_bar = ft.NavigationBar(on_change=switch, destinations=[
         ft.NavigationBarDestination(icon=ft.Icons.STYLE_OUTLINED, label="Collection"),
         ft.NavigationBarDestination(icon=ft.Icons.MENU_BOOK_OUTLINED, label="Decks"),
-        ft.NavigationBarDestination(icon=ft.Icons.GAVEL_OUTLINED, label="Rules")])
+        ft.NavigationBarDestination(icon=ft.Icons.GAVEL_OUTLINED, label="Rules"),
+        ft.NavigationBarDestination(icon=ft.Icons.TRENDING_UP, label="Finance")])
     # Android's back button steps back through the app instead of closing it: back through a
     # tab's pages, then to Collection, and on Collection it takes a second press to exit.
     # (An open dialog closes first on its own.)
@@ -570,7 +604,10 @@ def main(page: ft.Page):
 
     async def on_back(e):
         index = page.navigation_bar.selected_index
-        if scanner.active:
+        if reviewing["review"] is not None:
+            reviewing["review"].back()  # cancels the import
+            await e.control.confirm_pop(False)
+        elif scanner.active:
             close_scanner()
             await e.control.confirm_pop(False)
         elif index:

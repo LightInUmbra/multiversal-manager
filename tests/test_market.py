@@ -30,6 +30,19 @@ def test_build_and_read_back():
                                                               ("2026-09-30", 2.0)]
 
 
+def test_period_changes_and_the_phones_cached_copy(tmp_path, monkeypatch):
+    summary = market.build(date(2026, 9, 30), [_printing("a", finishes=("nonfoil",))],
+                           [("a", 0, "2026-08-31", 1.0), ("a", 0, "2026-09-23", 1.5)])
+    changes = {label: (then, change) for label, then, change in market.period_changes(summary, 0)}
+    assert changes["7 days"] == (1.5, (0.5, 0.5 / 1.5 * 100))
+    assert changes["90 days"] == (None, None)  # no price that far back
+
+    cache = tmp_path / "market.json.gz"
+    market.write(summary, cache)
+    monkeypatch.setattr(market.requests, "get", lambda *a, **k: (_ for _ in ()).throw(AssertionError("downloaded")))
+    assert market.download(cache=cache)["built"] == "2026-09-30"  # fresh enough: no download
+
+
 def test_shown_filters_and_sorts_like_the_desktop():
     def entry(name, price, past):
         row = {"name": name, "set_name": "Set", "set_code": "set", "price": price, "past": past,

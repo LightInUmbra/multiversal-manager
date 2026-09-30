@@ -190,21 +190,22 @@ class FinancePage:
             ft.Text(f"{row['set_name']} ({row['set_code'].upper()}) #{row['collector_number']}", color=theme.MUTED),
             ft.Text("Price history", size=12.5, weight=ft.FontWeight.W_600, color=theme.GOLD),
             chart(points),
+            high_low(points),
         ]
 
 
-def chart(points):
-    """A small line chart of [(day, price)], oldest first: the line, its highest and lowest
-    price, and the first and last day"""
+def chart(points, width=CHART_WIDTH, height=CHART_HEIGHT):
+    """A small line chart of [(day, price)], oldest first: the line and the first and last
+    day (the high and low go in a line of text under it, see high_low)"""
     if len(points) < 2:
         return ft.Text("No price history for this printing.", italic=True, color=theme.MUTED)
     prices = [p for _, p in points]
     low, high = min(prices), max(prices)
     span = (high - low) or 1
-    top, bottom = 16, CHART_HEIGHT - 16
+    top, bottom = 6, height - 16
 
     def x(i):
-        return 4 + i * (CHART_WIDTH - 8) / (len(points) - 1)
+        return 4 + i * (width - 8) / (len(points) - 1)
 
     def y(price):
         return bottom - (price - low) / span * (bottom - top)
@@ -212,13 +213,17 @@ def chart(points):
     color = theme.GAIN if prices[-1] >= prices[0] else theme.LOSS
     line = ft.Paint(color=color, stroke_width=2, style=ft.PaintingStyle.STROKE)
     small = ft.TextStyle(size=10.5, color=theme.MUTED)
-    shapes = [cv.Line(x1=0, y1=bottom, x2=CHART_WIDTH, y2=bottom, paint=ft.Paint(color=theme.LINE, stroke_width=1)),
+    shapes = [cv.Line(x1=0, y1=bottom, x2=width, y2=bottom, paint=ft.Paint(color=theme.LINE, stroke_width=1)),
               cv.Path(elements=[cv.Path.MoveTo(x=x(0), y=y(prices[0])),
                                 *[cv.Path.LineTo(x=x(i), y=y(p)) for i, p in enumerate(prices[1:], 1)]], paint=line),
               *[cv.Circle(x=x(i), y=y(p), radius=2.5, paint=ft.Paint(color=color)) for i, p in enumerate(prices)],
-              cv.Text(x=0, y=0, value=f"high {_money(high)}", style=small),
               cv.Text(x=0, y=bottom + 2, value=points[0][0], style=small),
-              cv.Text(x=CHART_WIDTH - 62, y=bottom + 2, value=points[-1][0], style=small)]
-    if high != low:
-        shapes.append(cv.Text(x=CHART_WIDTH - 70, y=0, value=f"low {_money(low)}", style=small))
-    return cv.Canvas(shapes=shapes, width=CHART_WIDTH, height=CHART_HEIGHT)
+              cv.Text(x=width - 62, y=bottom + 2, value=points[-1][0], style=small)]
+    return cv.Canvas(shapes=shapes, width=width, height=height)
+
+
+def high_low(points):
+    # The line under a chart: its highest and lowest price
+    prices = [p for _, p in points]
+    return ft.Text(f"Last 90 days: high {_money(max(prices))} · low {_money(min(prices))}", size=12,
+                   color=theme.MUTED) if prices else ft.Text("")
