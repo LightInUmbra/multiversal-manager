@@ -15,6 +15,7 @@ October 21, 2025 update and the Game Changers changes of February 9, 2026.
 
 # Imports
 import re
+import sys
 from dataclasses import dataclass, field
 
 import requests
@@ -23,6 +24,9 @@ import scryfall
 
 SPELLBOOK = "https://backend.commanderspellbook.com/estimate-bracket"
 SPELLBOOK_SEARCH = "https://backend.commanderspellbook.com/variants/"
+# Commander Spellbook only answers browsers on its own site (CORS), so the website can't ask it
+SPELLBOOK_REACHABLE = sys.platform != "emscripten"
+NO_SPELLBOOK = "Combo checks need the desktop or phone app: Commander Spellbook only answers its own website."
 COMBO_PAGE, COMBO_PAGES = 100, 10  # a commander's combos: up to 1,000
 FEW_EXTRA_TURNS = 2  # ponytail: "low quantities" isn't a number; 2 is a guess, tune if it flags fair decks
 

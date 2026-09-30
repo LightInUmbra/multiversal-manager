@@ -215,6 +215,7 @@ class DecksPage:
         self.scored = {}              # (query, themes, partner cards) -> synergy.score() result
         self.card_rows = {}           # card name -> its Scryfall details (None: not found), for the visit
         self.combos = {}              # commander names -> their Commander Spellbook combos, for the visit
+        self.looked_up = set()        # card names already asked of Scryfall this visit (found or not)
         self.explore = {"query": "", "type": "", "rows": [], "page": 0, "more": False, "total": 0, "for": None,
                         "sort": "Name", "colors": True}
         self.mine = {"search": "", "type": "", "legal": True}
@@ -272,6 +273,7 @@ class DecksPage:
     def show_home(self):
         owned = db.owned_by_name()
         everything = db.get_lists()
+        self._fill_home_card_data(everything)
         lists = [l for l in everything
                  if (self.home["kind"] == "all" or l["kind"] == self.home["kind"])
                  and self.home["search"].lower() in l["name"].lower()]
@@ -307,6 +309,17 @@ class DecksPage:
         self.view.content = ft.Container(ft.Column([toolbar, grid], spacing=18, expand=True),
                                          padding=ft.Padding.symmetric(horizontal=PAGE_PADDING, vertical=18), expand=True)
         self.page.update()
+
+    def _fill_home_card_data(self, lists):
+        # The decks' legality, types and colors this browser hasn't looked up yet (a reload forgets
+        # them), so the tiles' problem counts match the decks'; once per name per visit
+        missing = {e["name"] for l in lists if l["kind"] == "deck"
+                   for e in db.get_list_entries(l["id"]) if e["legalities"] is None} - self.looked_up
+        if missing:
+            self.looked_up |= missing
+            rows = self.busy("Looking up cards", lambda: scryfall.fetch_card_data(missing))
+            if rows:
+                db.add_oracle_cards(rows)
 
     def _set_home(self, **changes):
         self.home.update(changes)
@@ -581,13 +594,13 @@ class DecksPage:
     def _deck_panel(self, s):
         quick = _field('+ Quick add: type "4 Lightning Bolt" and press Enter', expand=True,
                        on_submit=lambda e: self.quick_add(e.control.value))
-        tools = [quick]
+        tools = []
         if s["is_deck"]:
             tools += [_dropdown(self.add_to, [(sec, f"Add to: {SECTION_TITLES[sec]}") for sec in SECTIONS],
                                 lambda e: self.set_add_to(e.control.value), 190)]
-        tools.append(self.sort_tools)
         tools.append(_dropdown(self.row_size, [(k, f"Rows: {k}") for k in ROW_SIZES],
-                               lambda e: self.set_row_size(e.control.value), 150))
+                               lambda e: self.set_row_size(e.control.value), 165))
+        tools.append(self.sort_tools)  # last, so it wraps onto a line of its own in a narrow panel
         # Headings with a drag handle between each two, in place of the rows' 8 pixel spacing
         cells, self.header_cells = [], []
         for i, (label, _, right) in enumerate(GRID_HEADERS):
@@ -600,7 +613,9 @@ class DecksPage:
             secondary_items=[ft.PopupMenuItem(content="Reset column widths", on_click=lambda e: self.reset_columns())],
             secondary_trigger=ft.ContextMenuTrigger.DOWN)
         return ft.Column([
-            ft.Container(ft.Row(tools, spacing=8, wrap=True, run_spacing=8), padding=10, border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE))),
+            # Quick add on its own line: an expanding field can't go in a wrapping row (Flutter draws a grey box)
+            ft.Container(ft.Column([ft.Row([quick]), ft.Row(tools, spacing=8, wrap=True, run_spacing=8)], spacing=8),
+                         padding=10, border=ft.Border.only(bottom=ft.BorderSide(1, theme.LINE))),
             self.warn_box, header, self.deck_rows], spacing=0, expand=True)
 
     def _fill_deck(self, s):
@@ -1086,7 +1101,8 @@ class DecksPage:
         filters = [ft.Checkbox(label="Cards I own", value=rec["owned"], on_change=lambda e: self._rec(owned=e.control.value)),
                    ft.Checkbox(label="Staples", value=rec["staples"], on_change=lambda e: self._rec(staples=e.control.value)),
                    _dropdown(rec["price"], [(k, k) for k in PRICES], lambda e: self._rec(price=e.control.value), 130),
-                   theme.button("Available combos", lambda e: self.show_combos(s, commanders, identity))]
+                   *([theme.button("Available combos", lambda e: self.show_combos(s, commanders, identity))]
+                     if brackets.SPELLBOOK_REACHABLE else [])]
         controls = [ft.Text(f"Build around (color identity {identity or 'colorless'}):", size=12, color=theme.MUTED),
                     self._theme_picker(commanders), ft.Row(filters, spacing=4, wrap=True, run_spacing=4)]  # wraps on a phone
         if s["info"]["bracket"]:
@@ -1186,8 +1202,10 @@ class DecksPage:
             if report.combos_checked:
                 combos = [" + ".join(c.cards) for c in report.combos]
                 lines.append(_check(not broken.get("Two-card combos"), f"Two-card combos: {', '.join(combos) or 'none'}"))
-            else:
+            elif brackets.SPELLBOOK_REACHABLE:
                 lines.append(theme.button("Check for combos (Commander Spellbook)", lambda e: self.check_combos(s)))
+            else:
+                lines.append(ft.Text(brackets.NO_SPELLBOOK, size=12, color=theme.MUTED))
             lines.append(ft.Text(f"These cards fit {brackets.label(report.minimum())}.", size=12, color=theme.MUTED))
         return lines
 

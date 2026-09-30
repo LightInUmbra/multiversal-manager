@@ -301,7 +301,9 @@ class Decks:
         lines += [ft.Row([ft.Text(title, color=MUTED, size=13, width=130),
                           ft.Text(", ".join(names) or "none", size=13, expand=True)],
                          vertical_alignment=ft.CrossAxisAlignment.START) for title, names in found]
-        if spellbook is None:
+        if spellbook is None and not brackets.SPELLBOOK_REACHABLE:
+            lines.append(ft.Text(brackets.NO_SPELLBOOK, size=12, color=MUTED))
+        elif spellbook is None:
             lines.append(ft.OutlinedButton("Check for combos (Commander Spellbook)", icon=ft.Icons.SEARCH,
                                            on_click=self.check_combos))
         return _box(lines)

@@ -16,26 +16,28 @@ Everything it recommends is worked out from the cards themselves (their rules te
 
 ### Your collection
 
-![The collection: every card with its price, change and history](docs/screenshots/collection.png)
+![The collection sorted by price and grouped by card type, each group with its count and value, and the selected card's details](docs/screenshots/collection.png)
 
 - **Exact printings, not just card names --** Add cards and their printings into your collection! From there, the possibilities are endless! Use the cards you own for the decks you'd like to build, or search through the MTG card database for cards you'd need but don't own (yet!).
 - **Condition, language and notes --** The program also picks up on the conditions of cards, their language, and any notes you'd like to put down for them ("signed" or "in the red binder"). If you have the same printing in two conditions or languages, each gets its own entry. Importing decks or cards/card lists pick these up from other tools' CSV files too.
 - **Live value --** A running total of what your collection is worth, plus card counts and how each card's price has moved over the last 24 hours, 7, 30 or 90 days, or all time. (Limited by the current app/market data)
 - **Price history for every card --** All cards have their price history backdated 3 months; Only real market changes count as movement, so adding or removing cards never looks like a gain or a loss.
-- **Trends** (Ctrl+T) -- How your collection's value has changed over time, along with your biggest winners and losers.
+- **Trends** (Ctrl+T) -- How your collection's value has changed over time, along with your biggest winners and losers. On the website it's a tab on the Cards page, and on the phone you tap your collection's total.
+- **Sort and group it your way --** Sort by name, price, quantity, mana value, color, type, rarity, set or date added, either way around, and group cards by type, color, mana value, rarity, set, finish or condition. Each group shows how many cards it has and what they're worth, and folds away with a click. It works the same in the desktop app, on the website and on the phone, for your collection, your decks, binders and wishlists, and your sealed product, and each list remembers how you left it.
+- **Scan cards with your phone --** Point the camera at a card and the app reads its name, set and collector number to find the exact printing. It runs on the phone itself, with no internet needed to read the card. Add it to your collection, or open a deck and scan straight into it.
 - **Bring your collection with you --** Import CSV exports from Moxfield, ManaBox, Deckbox and most other tools (columns are matched by their headers), or paste a text file/doc like `4 Lightning Bolt` or `1x Sol Ring (C21) 263 *F*`. You get to review everything before it's saved, and any card where the printing is a guess shows up first, with a picture to help you pick the right one.
 - **Export** to CSV whenever you like.
-- **Sealed product --** The *Sealed* tab keeps track of booster boxes, bundles, precons, prerelease kits and anything else still in shrinkwrap. Pick from MTGJSON's list of every sealed product ever made (search by name or set, filter by type), or type in anything that isn't listed. Each entry keeps what you paid and what it's worth now (you enter both for now; right-click to look it up on TCGplayer), and the bottom of the window shows your cards, your sealed product and the two combined.
+- **Sealed product --** The *Sealed* tab (on the desktop, the website and the phone) keeps track of booster boxes, bundles, precons, prerelease kits and anything else still in shrinkwrap. Pick from MTGJSON's list of every sealed product ever made (search by name or set, filter by type), or type in anything that isn't listed. Each entry keeps what you paid and what it's worth now (you enter both for now; right-click to look it up on TCGplayer), and the bottom of the window shows your cards, your sealed product and the two combined.
 - **Quick edits --** Right-click or double-click a card to change its printing, finish, quantity or price. Adding a printing you already own just bumps the quantity instead of making a duplicate.
 - **Automatic backups --** The app backs up your collection once a day when it starts and keeps the last 10. Want one right now? *File → Back Up Now*. Need to go back? *File → Restore from Backup…* rolls you back, and saves your current collection first so you can undo the restore too. Backups stay small (a few MB up to tens of MB) because they skip price history that can just be downloaded again.
 
 ### Deck Builder
 
-![The Deck Builder: a Commander deck checked against its bracket, with recommendations for its commander](docs/screenshots/deck-builder.png)
+![The Deck Builder: a Commander deck grouped by card type and sorted by mana value, checked against its bracket, with recommendations for its commander](docs/screenshots/deck-builder.png)
 
 Open it with Ctrl+L. It works for Standard, Pioneer, Modern, Legacy, Vintage, Pauper, Commander, Oathbreaker, Brawl and every other format Scryfall tracks, and you can make binders and wishlists there too.
 
-- **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section, and a grid of card images to build from, each showing how many copies you own.
+- **Three panels --** The selected card's details (rules text, legality, how many you own, and −1 / +1 buttons), your deck grouped by section (or by type, color, mana value, rarity or set, sorted however you like), and a grid of card images to build from, each showing how many copies you own.
 - **Stats --** The *Stats* tab shows a deck's mana curve and average mana value, its colors by mana symbols, how many of each card type (and the share of lands), and its most valuable cards. It's there in the desktop app, on the website and on the phone (the chart button on a deck).
 - **Build from what you have, or explore all of what MTG has to offer --** *My Cards* shows your collection, *Explore* shows every card in Magic: The Gathering. Search, filter by type, color, or "legal for this deck", and sort however you like.
 - **Pick your printing --** Choosing a different printing opens a window with every version of the card: its image, set, rarity, and the price of each finish, plus how many you own.
@@ -60,7 +62,9 @@ Your window into the wider Magic: The Gathering market (Ctrl+Shift+F).
 - **Track what you care about --** Add a single printing, every printing of a card, or entire sets with *Track Cards…*. Remove a printing or a whole set with Delete or a right-click. Price history sticks around either way.
 - **History from day one --** The first launch grabs 90 days of price history for every card, so you get trends right away. After that the app saves each day's prices and the history just keeps growing.
 
-> Heads up: the first time you open Finance it downloads about 140 MB (card data plus 90 days of prices), and the database grows to a few hundred MB. Prices update once a day, as often as the data sources publish them.
+On the website and the phone, Finance works from a market file that GitHub builds once a day: every printing's price today and over the last 90 days, a few MB instead of hundreds. Tap a card on the phone for its enlarged image, its price over every period, its history and how many you own.
+
+> Heads up: the first time you open Finance on the desktop it downloads about 140 MB (card data plus 90 days of prices), and the database grows to a few hundred MB. Prices update once a day, as often as the data sources publish them.
 
 ### Rules
 
@@ -84,9 +88,15 @@ New versions are checked for once a week. Everything comes straight from Wizards
 <details>
 <summary><b>More screenshots</b></summary>
 
-![Sealed product: what you paid, what it's worth, and the gain](docs/screenshots/sealed.png)
+![Sealed product grouped by product type: what you paid, what it's worth, and the gain](docs/screenshots/sealed.png)
 
 ![The Commander Brackets page in the rules window](docs/screenshots/rules-brackets.png)
+
+![The website's Deck Builder: the deck grouped by type, the selected card, and your cards to add](docs/screenshots/web-deck-builder.png)
+
+![The website's Trends tab: your collection's value over 90 days and its biggest gainers and losers](docs/screenshots/web-trends.png)
+
+![The website's Finance page: the day's biggest price spikes and a card's price history](docs/screenshots/web-finance.png)
 
 </details>
 
@@ -99,8 +109,18 @@ The bigger idea is a set of connected apps that all share the same collection:
 | Platform | Status |
 |---|---|
 | **Desktop** | Available! |
-| **Android** | Available; collection and prices, Deck Builder (with Stats, and Recommended and Available Combos for Commander decks), the rules judge, and a camera card scanner |
-| **Web** | [multiversalmanager.app](https://multiversalmanager.app), updated with every release; the desktop's layout in your browser (collection, Deck Builder with Commander recommendations, rules), signed in to the same account |
+| **Android** | Available; collection and prices, sealed product, Trends, Finance, importing, Deck Builder (with Stats, and Recommended and Available Combos for Commander decks), the rules judge, and a camera card scanner that adds to your collection or straight into a deck |
+| **Web** | [multiversalmanager.app](https://multiversalmanager.app), updated with every release; the desktop's layout in your browser (collection, sealed product, Trends, Finance, importing, Deck Builder with Commander recommendations, rules), signed in to the same account. Prefer the phone's layout? Switch to it from the account menu |
+
+![The website: the collection's value at a glance, sorted and grouped like the desktop app](docs/screenshots/web-cards.png)
+
+<p align="center">
+  <img src="docs/screenshots/phone-collection.png" width="160" alt="The phone app's collection, grouped by type">
+  <img src="docs/screenshots/phone-sort.png" width="160" alt="Sort and group choices on the phone">
+  <img src="docs/screenshots/phone-deck.png" width="160" alt="A Commander deck on the phone, with its bracket and grouping">
+  <img src="docs/screenshots/phone-trends.png" width="160" alt="Collection Trends on the phone">
+  <img src="docs/screenshots/phone-finance.png" width="160" alt="Finance on the phone: the week's price spikes">
+</p>
 
 The goal: add a card on your phone while you're at the store, and it's already there on your desktop when you get home. Sign in under *File → Sync Account* on the desktop (the person icon on the phone) with the same account on each, and your cards, decks and sealed product sync on their own within a few seconds. Each device keeps its own copy in a local SQLite database, so everything still works offline and catches up the next time it's online.
 
@@ -179,6 +199,10 @@ python interactions.py build
 
 Rebuilds `interactions.json.gz` from the card database and rulings on your computer (open the Deck Builder and the Rules window once so both are downloaded). It takes about half a minute. Every release does this for you: it downloads Scryfall's newest card data and rulings and rebuilds the file before building the apps (`python interactions.py build --download`, which uses a throwaway database and never touches your collection), so committing the file is only needed to try new data before a release. Cards newer than the file still pair up by their rules text.
 
+### The website's market data
+
+The website and the phone can't download the whole card market like the desktop does, so `.github/workflows/market.yml` builds a small summary of it once a day on GitHub (`python market.py market.json.gz`) and publishes it on the `market-data` branch, where Finance and Trends read it. It runs on its own; to start it by hand, use *Run workflow* on the Actions tab.
+
 ### Releasing a new version
 
 Tests run on GitHub for every push (the badge at the top). To publish a version, tag it and push the tag:
@@ -220,6 +244,9 @@ multiversal-manager/
     build.py                 # Builds the Windows app: portable zip and installer (installer.iss)
     brackets.py              # Commander Brackets: the brackets, Game Changers, and checking a deck
     price_changes.py         # How prices moved over a period, shared by every app
+    market.py                # The daily market summary behind Finance and Trends on the website and phone
+    card_sorting.py          # Sorting and grouping cards, the same in every app
+    sort_bar.py              # The desktop's Sort / Group controls and group headings
     trends.py                # The Trends window
     database.py              # SQLite storage, price history and schema upgrades
     backup.py                # Daily backups, Back Up Now and Restore
@@ -231,7 +258,7 @@ multiversal-manager/
     card_image.py            # Card images, loaded in the background and never cropped
     charts.py                # Price and value history charts
     scryfall.py              # Card data, prices, images and bulk downloads
-    mtgjson.py               # 90-day price history backfill
+    mtgjson.py               # 90-day price history backfill and the list of sealed products
     background.py            # Keeps network work off the interface thread
     sync.py                  # Syncing with the other devices (Supabase), merging edits made on both
     ask.py                   # The rules judge's Ask a Rules Question, shared with the phone app
@@ -246,6 +273,14 @@ multiversal-manager/
         web_desktop.py       # The website's desktop layout: header, dashboard tiles, collection table
         web_decks.py         # The website's Deck Builder, in the desktop's three-panel layout
         web_rules.py         # The website's Rules page, laid out like the desktop's Rules window
+        web_finance.py       # The website's Finance page
+        web_sealed.py        # The website's Sealed tab
+        web_trends.py        # Trends, for the website and the phone
+        web_import.py        # Importing on the website, with the desktop's review step
+        phone_finance.py     # Finance on the phone
+        phone_sealed.py      # Sealed product on the phone
+        phone_import.py      # Importing on the phone
+        sort_controls.py     # Sort / Group controls for the website and the phone
         card_form.py         # The website's Add / Edit Card window
         theme.py             # Colors, fonts and shared controls for the phone and website
         build_apk.py         # Builds the APK
