@@ -11,11 +11,11 @@ Blocking network I/O -- call from a background thread.
 import csv
 import gzip
 import json
-import lzma
 import re
 
 import requests
 
+import database as db
 import scryfall
 from scryfall import HEADERS, TIMEOUT
 
@@ -73,13 +73,29 @@ def sealed_group(category):
     return SEALED_CATEGORIES.get(category, ("", "Other"))[1]
 
 
+def _get_gzipped(path):
+    # A file's "data" from its .gz copy (SetList: 2.5 MB rather than about 20), for the phone and website too
+    response = requests.get(f"{BASE_URL}/{path}.gz", headers={"User-Agent": HEADERS["User-Agent"]}, timeout=TIMEOUT)
+    response.raise_for_status()
+    content = response.content
+    # A browser may have unpacked it already
+    return json.loads(gzip.decompress(content) if content[:2] == b"\x1f\x8b" else content)["data"]
+
+
 def sealed_catalog():
     # Every sealed product MTGJSON lists, as rows for db.replace_sealed_catalog
     scryfall._require_online()
     return [{"uuid": product["uuid"], "name": product["name"], "set_code": s["code"], "set_name": s["name"],
              "product_type": product_type(product.get("category"), product.get("subtype")),
              "category": sealed_group(product.get("category")), "released": s.get("releaseDate")}
-            for s in _get("SetList.json") for product in s.get("sealedProduct") or []]
+            for s in _get_gzipped("SetList.json") for product in s.get("sealedProduct") or []]
+
+
+def download_sealed_catalog():
+    # Downloads the catalog into the card database (the Add Sealed Product list); returns how many
+    products = sealed_catalog()
+    db.replace_sealed_catalog(products)
+    return len(products)
 
 
 def precon_cards(name, set_codes):
@@ -160,6 +176,7 @@ def history_points(entries, scryfall_ids):
 def price_history(progress=None):
     # Every printing's last 90 days of prices, as history_points tuples.
     # progress((done, total)) gets compressed bytes read every so often.
+    import lzma  # here, not at the top: the website's Python has no lzma, and only this needs it
     scryfall_ids = _scryfall_ids()
     with _stream(PRICES_URL) as response:
         total = int(response.headers.get("Content-Length") or 0)

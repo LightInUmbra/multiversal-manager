@@ -104,16 +104,46 @@ class CardsPage:
         self.tiles = ft.Row(spacing=14, height=96, vertical_alignment=ft.CrossAxisAlignment.STRETCH)  # tiles the same height
         self.table = ft.ListView(expand=True)
         self.detail = ft.Column(scroll=ft.ScrollMode.AUTO, spacing=8)
-        self.view = ft.Container(ft.Column([
-            self.tiles,
+        self.cards_area = ft.Column([
             ft.Row([self.search, ft.Container(expand=True), theme.button("Import…", lambda e: import_cards()),
                     theme.button("Refresh Prices", refresh_prices),
                     theme.button("+ Add Card", lambda e: add(), primary=True)]),
             ft.Row([theme.panel(self.table, expand=True),
                     theme.panel(self.detail, width=DETAIL_WIDTH, padding=16)],
                    expand=True, spacing=20, vertical_alignment=ft.CrossAxisAlignment.START),
+        ], spacing=16, expand=True)
+        # Cards and sealed product each get a tab, like the desktop; the combined total shows beside them
+        self.sealed = None  # main.py's web_sealed.SealedPanel (it needs this page's total, so it comes after)
+        self.showing = {"tab": "Cards"}
+        self.tabs = ft.Row(spacing=0)
+        self.total = ft.Text(size=13, color=theme.MUTED)
+        self.area = ft.Container(self.cards_area, expand=True)
+        self.view = ft.Container(ft.Column([
+            self.tiles,
+            ft.Row([self.tabs, ft.Container(expand=True), self.total], vertical_alignment=ft.CrossAxisAlignment.END),
+            self.area,
             ft.Text(NOTICE, size=11, color=theme.MUTED),
         ], spacing=16, expand=True), padding=ft.Padding.symmetric(horizontal=PAGE_PADDING, vertical=20), expand=True)
+        self.draw_tabs()
+
+    def draw_tabs(self):
+        def tab(label):
+            on = label == self.showing["tab"]
+            return ft.Container(ft.Text(label, size=14, weight=ft.FontWeight.W_600, color=theme.GOLD if on else theme.MUTED),
+                                padding=ft.Padding.symmetric(horizontal=14, vertical=6), on_click=lambda e: self.show(label),
+                                border=ft.Border.only(bottom=ft.BorderSide(2, theme.GOLD if on else theme.LINE)))
+        self.tabs.controls = [tab("Cards"), tab("Sealed")]
+
+    def show(self, label):
+        self.showing["tab"] = label
+        self.draw_tabs()
+        self.area.content = self.sealed.view if label == "Sealed" else self.cards_area
+        self.sealed.refresh() if label == "Sealed" else self.refresh()
+
+    def update_total(self):
+        # The desktop's "Collection total": cards and sealed product, separately and together
+        cards, sealed = db.get_summary()[2], db.sealed_summary()[1]
+        self.total.value = f"Collection total: ${cards + sealed:,.2f}   (cards ${cards:,.2f} + sealed ${sealed:,.2f})"
 
     # The columns: (heading, sort key, numeric)
     COLUMNS = [("Name", lambda r, c: r["name"].lower(), False),
@@ -131,7 +161,11 @@ class CardsPage:
         changes = price_changes.compute_changes(everything, db.get_past_prices(CHANGE_DAYS))
         text = (self.search.value or "").lower()
         rows = [r for r in everything if text in f"{r['name']} {r['set_name']} {r['artist'] or ''}".lower()]
+        if self.showing["tab"] == "Sealed" and self.sealed is not None:
+            self.sealed.refresh()  # the sealed tab is showing; it updates the total itself
+            return
         self.show_tiles(everything, changes)
+        self.update_total()
         self.table.controls = [self.card_table(rows, changes)]
         if self.selected["id"] not in self.rows:
             self.selected["id"] = None

@@ -45,6 +45,13 @@ def collection_change(changes):
     return total, (total / past_value * 100 if past_value else None)
 
 
+def sealed_gain(row):
+    # What a sealed entry has gained or lost in all, or None without both prices
+    if row["paid"] is None or row["value"] is None:
+        return None
+    return (row["value"] - row["paid"]) * row["quantity"]
+
+
 def format_change(amount, percent=None):
     sign = "+" if amount > 0.004 else "−" if amount < -0.004 else "±"
     text = f"{sign}${abs(amount):,.2f}"

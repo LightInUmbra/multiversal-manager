@@ -30,9 +30,11 @@ import web_decks  # noqa: E402
 import web_desktop  # noqa: E402
 import phone_finance  # noqa: E402
 import phone_import as phone_import_review  # noqa: E402
+import phone_sealed  # noqa: E402
 import web_finance  # noqa: E402
 import web_import  # noqa: E402
 import web_rules  # noqa: E402
+import web_sealed  # noqa: E402
 
 APP_NAME = "Multiversal Manager"
 BACK_TO_EXIT = 2  # seconds to press back again to leave the app
@@ -128,6 +130,9 @@ def main(page: ft.Page):
     def show_cards():
         if desktop_layout():
             cards_page.refresh()
+            return
+        if collection_mode["sealed"]:
+            phone_sealed_view.refresh()
             return
         text = (search.value or "").lower()
         rows = [r for r in db.get_all_cards()
@@ -413,8 +418,29 @@ def main(page: ft.Page):
     deck_builder = decks.Decks(page, toast, busy, card_dialog)
     body = ft.Container(expand=True)
 
+    # The phone's Collection switches between cards and sealed product, like the desktop's two tabs
+    collection_mode = {"sealed": False}
+
+    def show_sealed(on):
+        collection_mode["sealed"] = on
+        body.content = collection_view()
+        show_cards()
+
+    def collection_switch():
+        def side(label, on):
+            chosen = on == collection_mode["sealed"]
+            return ft.Container(ft.Text(label, size=13, color=None if chosen else theme.MUTED), expand=True,
+                                alignment=ft.Alignment.CENTER, padding=ft.Padding.symmetric(vertical=7),
+                                bgcolor=theme.COLORS["primary_container"] if chosen else None,
+                                border=ft.Border.all(1, theme.COLORS["outline"]), on_click=lambda e: show_sealed(on))
+        return ft.Row([side("Cards", False), side("Sealed", True)], spacing=0)
+
     def collection_view():
-        return cards_page.view if desktop_layout() else ft.Column([search, summary, card_list], expand=True)
+        if desktop_layout():
+            return cards_page.view
+        shown = phone_sealed_view.view if collection_mode["sealed"] else ft.Column([search, summary, card_list],
+                                                                                    expand=True)
+        return ft.Column([collection_switch(), shown], expand=True, spacing=8)
 
     # The desktop layout's header, in place of the phone's app bar and bottom bar
     def open_url(url):
@@ -529,6 +555,7 @@ def main(page: ft.Page):
         toast(f"Imported {importer.count(cards, 'card')} ({importer.count(len(records), 'entry')}).")
 
     cards_page = web_desktop.CardsPage(page, toast, desktop_add, desktop_edit, refresh_prices, desktop_import)
+    cards_page.sealed = web_sealed.SealedPanel(page, toast, busy, on_change=cards_page.update_total)
     decks_page = web_decks.DecksPage(page, toast, busy)
 
     rules_view = rules_tab.Rules(page, toast, busy)
@@ -555,6 +582,9 @@ def main(page: ft.Page):
         page.navigation_bar.visible = page.floating_action_button.visible = True
         body.content = collection_view()
         page.update()
+
+    # The Sealed side of the phone's Collection; its Add Sealed Product screen opens like the review
+    phone_sealed_view = phone_sealed.PhoneSealed(page, toast, busy, (open_review, close_review))
 
     def phone_import():
         page.run_task(web_import.start_import, page, file_picker, "your collection", imported, busy,
@@ -626,7 +656,8 @@ def main(page: ft.Page):
     page.views[0].on_confirm_pop = on_back
     page.floating_action_button = ft.FloatingActionButton(
         icon=ft.Icons.ADD, tooltip="Add",
-        on_click=lambda e: deck_builder.fab() if page.navigation_bar.selected_index == 1 else add_card())
+        on_click=lambda e: deck_builder.fab() if page.navigation_bar.selected_index == 1
+        else phone_sealed_view.add() if collection_mode["sealed"] else add_card())
     page.add(ft.SafeArea(ft.Column([desktop_top, progress, body], expand=True, spacing=4), expand=True))
     page.run_task(start)
     page.run_task(auto_sync)

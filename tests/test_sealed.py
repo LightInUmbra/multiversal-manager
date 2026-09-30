@@ -48,3 +48,24 @@ def test_table_items_sort_by_number_or_text_without_crashing():
     assert [i.text() for i in sorted(items)] == ["Booster Box", "bundle", "collector box"]
     prices = [sealed._item("$10.00", 10.0), sealed._item("$9.00", 9.0)]
     assert [i.text() for i in sorted(prices)] == ["$9.00", "$10.00"]
+
+
+def test_the_catalog_reads_compressed_or_already_unpacked(monkeypatch):
+    # MTGJSON's .gz file, or the same file a browser has unpacked on the way
+    import gzip
+    import json
+    data = json.dumps({"data": [{"code": "MH3", "name": "Modern Horizons 3", "releaseDate": "2024-06-14",
+                                 "sealedProduct": [{"uuid": "u", "name": "MH3 Bundle", "category": "bundle"}]}]})
+
+    class Response:
+        def __init__(self, content):
+            self.content = content
+
+        def raise_for_status(self):
+            pass
+
+    monkeypatch.setattr(mtgjson.scryfall, "_require_online", lambda: None)
+    for content in (gzip.compress(data.encode()), data.encode()):
+        monkeypatch.setattr(mtgjson.requests, "get", lambda *a, content=content, **k: Response(content))
+        (product,) = mtgjson.sealed_catalog()
+        assert (product["name"], product["set_code"], product["category"]) == ("MH3 Bundle", "MH3", "Bundles")

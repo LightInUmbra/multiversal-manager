@@ -20,6 +20,7 @@ from PySide6.QtWidgets import (
 import background
 import database as db
 import mtgjson
+import price_changes
 import scryfall
 import trends
 
@@ -33,17 +34,7 @@ def money(value):
     return f"${value:,.2f}" if value else "—"
 
 
-def gain(row):
-    # What the entry has gained or lost in all, or None without both prices
-    if row["paid"] is None or row["value"] is None:
-        return None
-    return (row["value"] - row["paid"]) * row["quantity"]
-
-
-def _download_catalog():
-    products = mtgjson.sealed_catalog()
-    db.replace_sealed_catalog(products)
-    return len(products)
+gain = price_changes.sealed_gain  # shared with the phone and website
 
 
 class _Item(QTableWidgetItem):
@@ -209,7 +200,8 @@ class SealedDialog(QDialog):
                                 "You can still type a product in below.")
         else:
             self.status.setText("Downloading MTGJSON's list of sealed products…")
-            background.run(_download_catalog, on_success=self._on_catalog, on_error=self._on_catalog_failed)
+            background.run(mtgjson.download_sealed_catalog, on_success=self._on_catalog,
+                           on_error=self._on_catalog_failed)
 
     def _on_catalog(self, count):
         self._fill_types()
