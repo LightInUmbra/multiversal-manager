@@ -1360,6 +1360,7 @@ class DecksPage:
             return
         printing = _dropdown(str(next((i for i, c in enumerate(found) if c.id == entry["scryfall_id"]), 0)),
                              [(str(i), scryfall.printing_label(c)) for i, c in enumerate(found)], None, 480)
+        printing.editable = printing.enable_filter = True  # type to filter hundreds of basic land printings
         finish = _dropdown(str(entry["foil"]), [], None, 200)
         image = ft.Image(src=scryfall.image_url_for(found[int(printing.value)]), width=200, border_radius=8)
 

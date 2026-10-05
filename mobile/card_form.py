@@ -69,7 +69,7 @@ def open_card_form(page, on_save, existing=None, name=None):
     suggestions = ft.Column(spacing=0, tight=True)
     suggestion_box = ft.Container(suggestions, visible=False, border=ft.Border.all(1, ft.Colors.OUTLINE_VARIANT),
                                   margin=ft.Margin.only(left=LABEL_WIDTH + 10))
-    printing = ft.Dropdown(dense=True, expand=True, disabled=True)
+    printing = ft.Dropdown(editable=True, enable_filter=True, dense=True, expand=True, disabled=True)
     finish = ft.Dropdown(dense=True, width=200, disabled=True)
     price = ft.TextField(prefix="$", dense=True, width=140, value="0.00",
                          tooltip="Filled in from Scryfall's USD price; you can override it")

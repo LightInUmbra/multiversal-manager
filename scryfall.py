@@ -120,7 +120,8 @@ def price_for(card, foil):
 def printing_label(card):
     price = card.price_usd or card.price_usd_foil or card.price_usd_etched
     price_text = f"${price:.2f}" if price else "no price"
-    return f"{card.set_name} ({card.set}) #{card.collector_number} - {price_text}"
+    full_art = " · Full art" if card.data.get("full_art") else ""
+    return f"{card.set_name} ({card.set}) #{card.collector_number}{full_art} - {price_text}"
 
 
 def card_record(card, foil, quantity, price=None):
@@ -284,17 +285,24 @@ def autocomplete(partial_name):
     return sf.autocomplete(partial_name) or []
 
 
+def _all_printings(name):
+    # Every page of the search: sf.get_all_printings reads only the first 175 (cheapest first),
+    # which leaves out most of a basic land's 800 printings, full-art ones included
+    return sf._paginated_search(f"{sf.BASE_URL}/cards/search",
+                                {"q": f'!"{name}" -is:digital', "unique": "prints"})
+
+
 def get_printings(name):
     # Every paper printing of a card, newest first. Falls back to a fuzzy
     # lookup so "lightning bolt" or a small typo still finds the card.
     if offline:
         return _local_cards(name=name)
-    printings = sf.get_all_printings(name)
+    printings = _all_printings(name)
     if not printings:
         match = sf.search_fuzzy_card(name)
         if match is None:
             return []
-        printings = sf.get_all_printings(match.name) or [match]
+        printings = _all_printings(match.name) or [match]
     return sorted(printings, key=lambda c: c.released_at or "", reverse=True)
 
 

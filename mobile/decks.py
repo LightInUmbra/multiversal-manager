@@ -394,7 +394,7 @@ class Decks:
         section = ft.Dropdown(label="Section", value=entry["section"], visible=is_deck,
                               options=[ft.DropdownOption(key=s, text=SECTION_TITLES[s]) for s in SECTIONS])
         remove = ft.TextButton("Remove")
-        printing = ft.Dropdown(label="Printing", visible=False)
+        printing = ft.Dropdown(editable=True, enable_filter=True, label="Printing", visible=False)
         finish = ft.Dropdown(label="Finish", visible=False)
         printings = []
 

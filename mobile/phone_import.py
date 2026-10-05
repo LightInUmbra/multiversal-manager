@@ -90,7 +90,7 @@ class PhoneReview:
         if entry.card.id not in [c.id for c in printings]:
             printings.insert(0, entry.card)
         image = ft.Container(width=IMAGE_WIDTH, height=IMAGE_WIDTH * 1.4, border_radius=8)
-        printing = ft.Dropdown(dense=True, text_size=13, label="Printing", expand=True, value=str(
+        printing = ft.Dropdown(editable=True, enable_filter=True, dense=True, text_size=13, label="Printing", expand=True, value=str(
             [c.id for c in printings].index(entry.card.id)), options=[
             ft.DropdownOption(key=str(i), text=scryfall.printing_label(c)) for i, c in enumerate(printings)])
         finish = ft.Dropdown(dense=True, text_size=13, label="Finish", expand=True)

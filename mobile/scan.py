@@ -122,7 +122,7 @@ class Scanner:
         chosen, sure = pick_printing(printings, set_code, number)
         card = printings[chosen]
         image = ft.Image(src=scryfall.image_url_for(card) or "", height=300)
-        printing = ft.Dropdown(label="Printing", value=str(chosen), options=[
+        printing = ft.Dropdown(editable=True, enable_filter=True, label="Printing", value=str(chosen), options=[
             ft.DropdownOption(key=str(i), text=scryfall.printing_label(c)) for i, c in enumerate(printings)])
         finish = ft.Dropdown(label="Finish")
         quantity = ft.TextField(label="Quantity", value="1", keyboard_type=ft.KeyboardType.NUMBER)

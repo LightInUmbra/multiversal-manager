@@ -230,7 +230,7 @@ def main(page: ft.Page):
         # extras are more fields shown under the quantity (condition, deck section…).
         name = ft.TextField(label="Card name", autofocus=True)
         suggestions = ft.Column(tight=True)
-        printing = ft.Dropdown(label="Printing", visible=False, expand=True)
+        printing = ft.Dropdown(editable=True, enable_filter=True, label="Printing", visible=False, expand=True)
         finish = ft.Dropdown(label="Finish", visible=False)
         quantity = ft.TextField(label="Quantity", value="1", keyboard_type=ft.KeyboardType.NUMBER)
         printings = []

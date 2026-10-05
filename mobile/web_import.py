@@ -88,7 +88,7 @@ class ReviewDialog:
                                   border=ft.Border.all(1, theme.LINE), border_radius=8)
         self.title = ft.Text(size=15, weight=ft.FontWeight.BOLD)
         self.hint = ft.Text(size=12, color=theme.MUTED)
-        self.printing = ft.Dropdown(dense=True, width=SIDE_WIDTH - 20, label="Printing", text_size=13,
+        self.printing = ft.Dropdown(editable=True, enable_filter=True, dense=True, width=SIDE_WIDTH - 20, label="Printing", text_size=13,
                                      on_select=self.picked)
         self.finish = ft.Dropdown(dense=True, width=150, label="Finish", on_select=self.picked)
         self.price = ft.TextField(prefix="$", dense=True, width=120, label="Price (each)",

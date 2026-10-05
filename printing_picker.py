@@ -1,5 +1,5 @@
 # Imports
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QWidget, QFormLayout, QComboBox, QDoubleSpinBox, QLabel,
 )
@@ -37,6 +37,11 @@ class PrintingPicker(QWidget):
 
         self.printing_combo = QComboBox()
         self.printing_combo.setMinimumContentsLength(32)
+        # Typing filters the list ("full art", a set code…): a basic land has hundreds of printings
+        self.printing_combo.setEditable(True)
+        self.printing_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.printing_combo.completer().setFilterMode(Qt.MatchFlag.MatchContains)
+        self.printing_combo.completer().setCompletionMode(self.printing_combo.completer().CompletionMode.PopupCompletion)
         self.printing_combo.currentIndexChanged.connect(self._on_printing_changed)
 
         # The finishes the selected printing exists in (non-foil, foil, etched)
